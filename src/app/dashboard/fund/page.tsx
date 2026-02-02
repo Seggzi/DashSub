@@ -8,8 +8,7 @@ import Link from 'next/link';
 import Script from 'next/script';
 import { 
   Wallet, Copy, Check, ArrowLeft, CreditCard, 
-  Landmark, Info, History, ShieldCheck, 
-  ArrowUpRight, Loader2 
+  Landmark, Info, History, ShieldCheck, Zap, Loader2 
 } from 'lucide-react';
 
 declare global {
@@ -28,7 +27,7 @@ interface Transaction {
 }
 
 export default function FundWallet() {
-  const { session, isLoading } = useSupabaseSession();
+  const { session, isLoading: sessionLoading } = useSupabaseSession();
   const router = useRouter();
   const [wallet, setWallet] = useState<{ balance: number } | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -45,59 +44,56 @@ export default function FundWallet() {
   };
 
   useEffect(() => {
-    if (isLoading) return;
-    if (!session) { 
-      router.push('/auth'); 
-      return; 
+    if (sessionLoading) return;
+    if (!session) {
+      router.push('/auth');
+      return;
     }
 
-    const userId = session?.user?.id;
-    if (!userId) return;
+    const userId = session.user.id;
 
     async function loadData() {
-      const { data: walletData } = await supabase
-        .from('wallets')
-        .select('balance')
-        .eq('user_id', userId)
-        .single();
-      
-      if (walletData) setWallet(walletData);
+      try {
+        const { data: walletData } = await supabase
+          .from('wallets')
+          .select('balance')
+          .eq('user_id', userId)
+          .single();
 
-      const { data: transData } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(5);
+        if (walletData) setWallet(walletData);
 
-      if (transData) setTransactions(transData);
-      setLoading(false);
+        const { data: transData } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('type', 'deposit')
+          .order('created_at', { ascending: false })
+          .limit(5);
+
+        if (transData) setTransactions(transData);
+      } catch (err) {
+        console.error('Load error:', err);
+      } finally {
+        setLoading(false);
+      }
     }
 
     loadData();
 
     const channel = supabase
-      .channel('wallet_sync')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'wallets', 
-        filter: `user_id=eq.${userId}` 
-      }, (payload) => {
+      .channel('fund_page')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${userId}` }, (payload) => {
         setWallet(payload.new as { balance: number });
       })
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'transactions',
-        filter: `user_id=eq.${userId}`
-      }, () => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions', filter: `user_id=eq.${userId}` }, () => {
         loadData();
       })
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
-  }, [session, isLoading, router]);
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session, sessionLoading, router]);
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(virtualAccount.accNo);
@@ -107,46 +103,47 @@ export default function FundWallet() {
 
   const handlePaystack = async () => {
     const numAmount = Number(amount);
-    if (!numAmount || numAmount < 100) {
+    if (numAmount < 100) {
       alert('Minimum funding amount is ₦100');
       return;
     }
 
     if (typeof window.PaystackPop === 'undefined') {
-      alert('Payment system is still loading...');
+      alert('Payment system loading... try again');
       return;
     }
 
     setIsProcessing(true);
-    const reference = `DS_FUND_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
-    // FIX: Added 'type' to satisfy your database constraint
-    const { error } = await supabase.from('transactions').insert({
-      user_id: session?.user?.id,
-      amount: numAmount,
-      reference: reference,
-      status: 'pending',
-      type: 'deposit' 
-    });
+    const reference = `DS_FUND_${Date.now()}`;
 
-    if (error) {
-      console.error("DB Error:", error);
-      alert(`Initialization failed: ${error.message}`);
+    const { error: txError } = await supabase
+      .from('transactions')
+      .insert({
+        user_id: session?.user.id,
+        amount: numAmount,
+        reference,
+        status: 'pending',
+        type: 'deposit',
+      });
+
+    if (txError) {
+      alert('Failed to initialize');
       setIsProcessing(false);
       return;
     }
 
     const handler = window.PaystackPop.setup({
       key: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY!,
-      email: session?.user?.email || '',
-      amount: Math.round(numAmount * 100),
+      email: session?.user.email || '',
+      amount: numAmount * 100,
       currency: 'NGN',
       ref: reference,
-      metadata: { user_id: session?.user?.id },
-      callback: (response: any) => {
+      metadata: { user_id: session?.user.id },
+      callback: () => {
         setAmount('');
         setIsProcessing(false);
-        alert('Payment initiated! Your balance will update once confirmed.');
+        alert('Payment initiated!');
       },
       onClose: () => setIsProcessing(false),
     });
@@ -154,129 +151,152 @@ export default function FundWallet() {
     handler.openIframe();
   };
 
-  if (isLoading || loading) {
+  if (sessionLoading || loading) {
     return (
-      <div className="min-h-screen bg-[#08080c] flex items-center justify-center">
-        <Loader2 className="w-6 h-6 text-brand-mint animate-spin" />
+      <div className="min-h-screen bg-brand-primary flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-brand-mint animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#08080c] text-white font-sans selection:bg-brand-mint/30">
+    <div className="min-h-screen bg-brand-primary text-white font-sans selection:bg-brand-mint/30">
       <Script src="https://js.paystack.co/v1/inline.js" strategy="afterInteractive" />
       
-      <header className="sticky top-0 z-50 bg-[#08080c]/80 backdrop-blur-xl border-b border-white/[0.03] px-6 py-4">
-        <div className="max-w-xl mx-auto flex items-center justify-between">
-          <Link href="/dashboard" className="group flex items-center gap-2 text-brand-gray/50 hover:text-white transition-all">
-            <ArrowLeft size={16} />
-            <span className="text-[10px] font-black uppercase tracking-[0.2em]">Exit</span>
+      {/* HEADER: Ultra-slim */}
+      <header className="sticky top-0 z-50 bg-brand-carbon/40 backdrop-blur-md border-b border-white/5 px-4 py-3">
+        <div className="max-w-xl mx-auto flex items-center gap-4">
+          <Link href="/dashboard" className="p-1 hover:bg-white/5 rounded-lg transition text-brand-gray/50 hover:text-brand-mint">
+            <ArrowLeft size={18} />
           </Link>
-          <div className="flex flex-col items-center">
-             <span className="text-[11px] font-black uppercase tracking-[0.3em]">Capital</span>
-             <div className="h-0.5 w-4 bg-brand-mint mt-1 rounded-full" />
-          </div>
-          <div className="w-10" />
+          <span className="text-[11px] font-black uppercase tracking-[0.2em]">Add Capital</span>
         </div>
       </header>
 
-      <main className="p-4 md:p-10 max-w-xl mx-auto space-y-8">
-        {/* Balance Card */}
-        <div className="relative group p-[1px] rounded-[2.5rem] bg-gradient-to-b from-white/10 to-transparent">
-          <div className="bg-[#0c0c14] rounded-[2.5rem] p-8 relative overflow-hidden">
-            <div className="relative z-10 flex justify-between items-start">
-              <div className="space-y-1">
-                <p className="text-[9px] font-black text-brand-mint/60 uppercase tracking-[0.25em]">Available Balance</p>
-                <h2 className="text-4xl font-black tracking-tighter text-white">
-                  <span className="text-brand-mint/40 text-2xl mr-1 font-light">₦</span>
-                  {wallet?.balance.toLocaleString(undefined, {minimumFractionDigits: 2})}
-                </h2>
-              </div>
-              <div className="w-10 h-10 bg-brand-mint rounded-2xl flex items-center justify-center text-brand-carbon shadow-[0_0_20px_rgba(182,255,206,0.3)]">
-                <Wallet size={18} />
-              </div>
+      <main className="p-4 md:p-8 max-w-xl mx-auto space-y-6">
+        
+        {/* WALLET DISPLAY: High Density */}
+        <div className="bg-brand-carbon rounded-3xl p-6 border border-white/5 shadow-2xl relative overflow-hidden">
+          <div className="relative z-10 flex justify-between items-end">
+            <div>
+              <p className="text-[9px] font-black text-brand-gray/40 uppercase tracking-[0.2em] mb-1">Available Funds</p>
+              <h2 className="text-3xl font-black tracking-tighter">₦{wallet?.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</h2>
+            </div>
+            <div className="bg-brand-mint/10 p-2 rounded-xl text-brand-mint border border-brand-mint/20">
+              <Wallet size={16} />
             </div>
           </div>
+          <div className="absolute top-0 right-0 w-32 h-32 bg-brand-mint/5 rounded-full blur-3xl" />
         </div>
 
-        {/* Tabs */}
-        <div className="grid grid-cols-2 bg-white/[0.02] p-1.5 rounded-2xl border border-white/5">
+        {/* METHOD TOGGLE */}
+        <div className="flex bg-brand-carbon p-1 rounded-2xl border border-white/5">
           <button 
             onClick={() => setActiveTab('card')}
-            className={`flex items-center justify-center gap-2 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all duration-500 ${activeTab === 'card' ? 'bg-brand-mint text-brand-carbon shadow-xl' : 'text-brand-gray/40 hover:text-white'}`}
+            className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'card' ? 'bg-brand-mint text-brand-carbon shadow-lg' : 'text-brand-gray/40'}`}
           >
-            <CreditCard size={12} /> Card Payment
+            Online Payment
           </button>
           <button 
             onClick={() => setActiveTab('transfer')}
-            className={`flex items-center justify-center gap-2 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all duration-500 ${activeTab === 'transfer' ? 'bg-brand-mint text-brand-carbon shadow-xl' : 'text-brand-gray/40 hover:text-white'}`}
+            className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'transfer' ? 'bg-brand-mint text-brand-carbon shadow-lg' : 'text-brand-gray/40'}`}
           >
-            <Landmark size={12} /> Bank Transfer
+            Bank Transfer
           </button>
         </div>
 
-        <div className="space-y-6">
+        {/* CONTENT AREA */}
+        <div className="min-h-[300px]">
           {activeTab === 'card' ? (
-            <form onSubmit={(e) => { e.preventDefault(); handlePaystack(); }} className="bg-[#0c0c14] rounded-[2rem] p-6 border border-white/5 space-y-6">
-              <div className="space-y-3">
-                <div className="flex justify-between px-1">
-                  <label className="text-[9px] font-black text-brand-gray/40 uppercase tracking-widest">Deposit Amount</label>
-                  <span className="text-[8px] font-bold text-brand-mint uppercase tracking-tighter">Min ₦100.00</span>
+            <div className="space-y-4">
+              <div className="bg-brand-carbon rounded-3xl p-6 border border-white/5 space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black text-brand-gray/40 uppercase tracking-widest px-1">Funding Amount</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-brand-gray/40 text-xs">₦</span>
+                    <input
+                      type="number"
+                      placeholder="0.00"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      className="w-full bg-white/[0.03] border border-white/5 rounded-2xl py-4 pl-8 pr-4 text-sm font-bold focus:border-brand-mint outline-none transition-all placeholder:text-brand-gray/20"
+                    />
+                  </div>
                 </div>
-                <div className="relative">
-                  <span className="absolute left-6 top-1/2 -translate-y-1/2 font-bold text-brand-gray/30 text-xs">₦</span>
-                  <input
-                    type="number"
-                    placeholder="0.00"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="w-full bg-white/[0.02] border border-white/5 rounded-2xl py-5 px-10 text-xl font-black outline-none focus:border-brand-mint/50 transition-all"
-                  />
+
+                <button
+                  onClick={handlePaystack}
+                  disabled={isProcessing}
+                  className="w-full bg-brand-mint text-brand-carbon py-4 rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] hover:scale-[1.02] active:scale-95 transition-all shadow-xl shadow-brand-mint/10 flex items-center justify-center gap-2 disabled:opacity-70"
+                >
+                  {isProcessing ? <Loader2 className="animate-spin" size={14} /> : <>Initialize Secure Payment <Zap size={14} /></>}
+                </button>
+
+                <div className="flex items-center justify-center gap-2 opacity-30">
+                  <ShieldCheck size={12} />
+                  <span className="text-[8px] font-bold uppercase tracking-widest">PCI-DSS Compliant</span>
                 </div>
               </div>
-
-              <button
-                type="submit"
-                disabled={isProcessing}
-                className="w-full bg-brand-mint text-brand-carbon py-5 rounded-[1.5rem] font-black text-[10px] uppercase tracking-[0.3em] flex items-center justify-center gap-2"
-              >
-                {isProcessing ? <Loader2 className="animate-spin" size={14} /> : <>Continue Payment <ArrowUpRight size={14} /></>}
-              </button>
-            </form>
+            </div>
           ) : (
-            <div className="bg-[#0c0c14] rounded-[2rem] p-6 border border-white/5 space-y-6">
-              <div className="bg-white/[0.01] rounded-2xl p-5 border border-white/5">
-                <p className="text-[10px] font-bold text-brand-gray/40 uppercase mb-1">{virtualAccount.bank}</p>
-                <div className="flex items-center justify-between">
-                  <p className="text-2xl font-black text-white">{virtualAccount.accNo}</p>
-                  <button onClick={copyToClipboard} className="p-3 bg-brand-mint/5 text-brand-mint rounded-xl">
-                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                  </button>
+            <div className="space-y-4">
+              <div className="bg-brand-carbon rounded-3xl p-6 border border-white/5 space-y-5">
+                <div className="flex justify-between items-center">
+                  <span className="text-[9px] font-black text-brand-mint uppercase tracking-widest bg-brand-mint/5 px-2 py-1 rounded border border-brand-mint/10">Automated Setup</span>
+                  <div className="flex gap-1">
+                    <div className="w-1 h-1 bg-brand-mint rounded-full animate-pulse" />
+                    <div className="w-1 h-1 bg-brand-mint rounded-full animate-pulse delay-75" />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="bg-white/[0.02] rounded-2xl p-4 border border-white/5 relative group">
+                    <p className="text-[9px] font-bold text-brand-gray/40 uppercase mb-1">{virtualAccount.bank}</p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xl font-black tracking-tighter text-white">{virtualAccount.accNo}</p>
+                      <button onClick={copyToClipboard} className="p-2 hover:bg-brand-mint/10 text-brand-mint rounded-lg transition-colors">
+                        {copied ? <Check size={16} /> : <Copy size={16} />}
+                      </button>
+                    </div>
+                    <p className="text-[10px] font-bold text-brand-gray/40 mt-1 uppercase tracking-tighter">{virtualAccount.name}</p>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 p-4 bg-brand-mint/5 rounded-2xl border border-brand-mint/10">
+                  <Info size={14} className="text-brand-mint shrink-0 mt-0.5" />
+                  <p className="text-[10px] leading-relaxed text-brand-gray/50 font-medium">
+                    Funds sent to this account are automatically credited to your wallet within <span className="text-brand-mint">2-5 minutes</span>. A flat fee of ₦50 applies.
+                  </p>
                 </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* History */}
-        <section className="space-y-4">
-          <h3 className="px-2 font-black text-[9px] uppercase tracking-[0.2em] text-brand-gray/40">Recent Deposits</h3>
-          <div className="bg-[#0c0c14] rounded-[2rem] border border-white/5 divide-y divide-white/5 overflow-hidden">
+        {/* HISTORY: Tiny List */}
+        <section className="bg-brand-carbon rounded-3xl border border-white/5 overflow-hidden shadow-xl">
+          <div className="p-4 border-b border-white/5 flex items-center justify-between">
+            <h3 className="font-black text-[9px] uppercase tracking-[0.2em] text-brand-gray/40 flex items-center gap-2">
+              <History size={14}/> Recent Activity
+            </h3>
+            <Link href="/dashboard/transactions" className="text-[9px] font-black text-brand-mint uppercase tracking-widest hover:underline">View All</Link>
+          </div>
+          <div className="divide-y divide-white/5">
             {transactions.length > 0 ? (
               transactions.map((tx) => (
-                <div key={tx.id} className="p-5 flex items-center justify-between group">
-                  <div className="flex items-center gap-4">
-                    <div className="w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center text-brand-gray/40">
-                      <History size={14}/>
+                <div key={tx.id} className="p-4 flex items-center justify-between hover:bg-white/[0.01] transition">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-brand-mint">
+                      <Landmark size={14}/>
                     </div>
                     <div>
-                      <p className="text-[11px] font-bold text-white">Wallet Funding</p>
-                      <p className="text-[9px] text-brand-gray/50">{new Date(tx.created_at).toLocaleDateString()}</p>
+                      <p className="text-[11px] font-bold">Wallet Funding</p>
+                      <p className="text-[9px] text-brand-gray/40 font-medium">{new Date(tx.created_at).toLocaleDateString()}</p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p className="text-[11px] font-black text-brand-mint">+₦{tx.amount.toLocaleString()}</p>
-                    <p className={`text-[8px] font-black uppercase ${tx.status === 'success' ? 'text-emerald-500/60' : 'text-amber-500/60'}`}>{tx.status}</p>
+                    <p className="text-[8px] font-black uppercase text-emerald-500/60 tracking-widest">{tx.status}</p>
                   </div>
                 </div>
               ))
@@ -285,6 +305,7 @@ export default function FundWallet() {
             )}
           </div>
         </section>
+
       </main>
     </div>
   );
