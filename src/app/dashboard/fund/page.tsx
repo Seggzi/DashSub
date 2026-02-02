@@ -43,57 +43,53 @@ export default function FundWallet() {
     name: session?.user?.email ? `DS-${session.user.email.split('@')[0].toUpperCase()}` : 'DS-USER'
   };
 
-  useEffect(() => {
-    if (sessionLoading) return;
-    if (!session) {
-      router.push('/auth');
-      return;
-    }
+ useEffect(() => {
+  if (sessionLoading) return;
+  if (!session) {
+    router.push('/auth');
+    return;
+  }
 
-    const userId = session.user.id;
+  const userId = session.user.id;
 
-    async function loadData() {
-      try {
-        const { data: walletData } = await supabase
-          .from('wallets')
-          .select('balance')
-          .eq('user_id', userId)
-          .single();
+  async function loadData() {
+    const { data: walletData } = await supabase
+      .from('wallets')
+      .select('balance')
+      .eq('user_id', userId)
+      .single();
 
-        if (walletData) setWallet(walletData);
+    if (walletData) setWallet(walletData);
 
-        const { data: transData } = await supabase
-          .from('transactions')
-          .select('*')
-          .eq('user_id', userId)
-          .eq('type', 'deposit')
-          .order('created_at', { ascending: false })
-          .limit(5);
+    const { data: transData } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('type', 'deposit')
+      .order('created_at', { ascending: false })
+      .limit(5);
 
-        if (transData) setTransactions(transData);
-      } catch (err) {
-        console.error('Load error:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
+    if (transData) setTransactions(transData);
 
-    loadData();
+    setLoading(false);
+  }
 
-    const channel = supabase
-      .channel('fund_page')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${userId}` }, (payload) => {
-        setWallet(payload.new as { balance: number });
-      })
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions', filter: `user_id=eq.${userId}` }, () => {
-        loadData();
-      })
-      .subscribe();
+  loadData();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [session, sessionLoading, router]);
+  const channel = supabase
+    .channel('fund_page')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${userId}` }, (payload) => {
+      setWallet(payload.new as { balance: number });
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions', filter: `user_id=eq.${userId}` }, () => {
+      loadData();
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, [session, sessionLoading, router]);
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(virtualAccount.accNo);
@@ -105,11 +101,6 @@ export default function FundWallet() {
     const numAmount = Number(amount);
     if (numAmount < 100) {
       alert('Minimum funding amount is ₦100');
-      return;
-    }
-
-    if (typeof window.PaystackPop === 'undefined') {
-      alert('Payment system loading... try again');
       return;
     }
 
@@ -133,6 +124,7 @@ export default function FundWallet() {
       return;
     }
 
+    // Paystack setup
     const handler = window.PaystackPop.setup({
       key: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY!,
       email: session?.user.email || '',
@@ -143,7 +135,7 @@ export default function FundWallet() {
       callback: () => {
         setAmount('');
         setIsProcessing(false);
-        alert('Payment initiated!');
+        alert('Payment successful — balance updating!');
       },
       onClose: () => setIsProcessing(false),
     });
@@ -161,9 +153,7 @@ export default function FundWallet() {
 
   return (
     <div className="min-h-screen bg-brand-primary text-white font-sans selection:bg-brand-mint/30">
-      <Script src="https://js.paystack.co/v1/inline.js" strategy="afterInteractive" />
-      
-      {/* HEADER: Ultra-slim */}
+      {/* HEADER */}
       <header className="sticky top-0 z-50 bg-brand-carbon/40 backdrop-blur-md border-b border-white/5 px-4 py-3">
         <div className="max-w-xl mx-auto flex items-center gap-4">
           <Link href="/dashboard" className="p-1 hover:bg-white/5 rounded-lg transition text-brand-gray/50 hover:text-brand-mint">
@@ -174,13 +164,12 @@ export default function FundWallet() {
       </header>
 
       <main className="p-4 md:p-8 max-w-xl mx-auto space-y-6">
-        
-        {/* WALLET DISPLAY: High Density */}
+        {/* WALLET DISPLAY */}
         <div className="bg-brand-carbon rounded-3xl p-6 border border-white/5 shadow-2xl relative overflow-hidden">
           <div className="relative z-10 flex justify-between items-end">
             <div>
               <p className="text-[9px] font-black text-brand-gray/40 uppercase tracking-[0.2em] mb-1">Available Funds</p>
-              <h2 className="text-3xl font-black tracking-tighter">₦{wallet?.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}</h2>
+              <h2 className="text-3xl font-black tracking-tighter">₦{wallet?.balance.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '0.00'}</h2>
             </div>
             <div className="bg-brand-mint/10 p-2 rounded-xl text-brand-mint border border-brand-mint/20">
               <Wallet size={16} />
@@ -209,6 +198,9 @@ export default function FundWallet() {
         <div className="min-h-[300px]">
           {activeTab === 'card' ? (
             <div className="space-y-4">
+              {/* Load Paystack script INSIDE the form card */}
+              <Script src="https://js.paystack.co/v1/inline.js" strategy="afterInteractive" />
+
               <div className="bg-brand-carbon rounded-3xl p-6 border border-white/5 space-y-4">
                 <div className="space-y-2">
                   <label className="text-[9px] font-black text-brand-gray/40 uppercase tracking-widest px-1">Funding Amount</label>
@@ -241,6 +233,7 @@ export default function FundWallet() {
           ) : (
             <div className="space-y-4">
               <div className="bg-brand-carbon rounded-3xl p-6 border border-white/5 space-y-5">
+                {/* Transfer content - same as before */}
                 <div className="flex justify-between items-center">
                   <span className="text-[9px] font-black text-brand-mint uppercase tracking-widest bg-brand-mint/5 px-2 py-1 rounded border border-brand-mint/10">Automated Setup</span>
                   <div className="flex gap-1">
@@ -273,7 +266,7 @@ export default function FundWallet() {
           )}
         </div>
 
-        {/* HISTORY: Tiny List */}
+        {/* HISTORY */}
         <section className="bg-brand-carbon rounded-3xl border border-white/5 overflow-hidden shadow-xl">
           <div className="p-4 border-b border-white/5 flex items-center justify-between">
             <h3 className="font-black text-[9px] uppercase tracking-[0.2em] text-brand-gray/40 flex items-center gap-2">
