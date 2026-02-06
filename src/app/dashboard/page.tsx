@@ -9,21 +9,8 @@ import {
     Wallet, LogOut, Zap, Smartphone, Lightbulb,
     Tv, GraduationCap, History, Bell, Plus,
     LayoutDashboard, Share2, User, Eye, EyeOff,
-    Copy, Check, ChevronRight, Menu, X, ChevronDown,
-    ArrowDownLeft, ArrowUpRight, Phone, Sparkles
+    Copy, Check, ChevronRight, Menu, X, ChevronDown
 } from 'lucide-react';
-
-interface Transaction {
-  id: string;
-  amount: number;
-  status: 'success' | 'failed' | 'pending' | 'completed';
-  created_at: string;
-  reference: string;
-  type: 'deposit' | 'airtime' | 'data' | 'withdrawal' | string;
-  phone_number?: string;
-  network?: string;
-  metadata?: any;
-}
 
 export default function VtuDashboard() {
     // FIX: Destructure isLoading (or whatever your provider calls the loading state)
@@ -32,7 +19,6 @@ export default function VtuDashboard() {
 
     // States
     const [wallet, setWallet] = useState<{ balance: number } | null>(null);
-    const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [showBalance, setShowBalance] = useState(true);
     const [copied, setCopied] = useState(false);
     const [isSidebarOpen, setSidebarOpen] = useState(false);
@@ -62,38 +48,28 @@ export default function VtuDashboard() {
         const userId = session.user?.id;
         if (!userId) return;
 
-        async function loadData() {
-            const { data: walletData, error: walletError } = await supabase
+        async function loadWallet() {
+            const { data, error } = await supabase
                 .from('wallets')
                 .select('balance')
-                .eq('user_id', userId)
+                .eq('user_id', userId) // Using the constant here
                 .single();
 
-            if (walletError && walletError.code === 'PGRST116') {
+            if (error && error.code === 'PGRST116') {
                 const { error: createError } = await supabase
                     .from('wallets')
-                    .insert({ user_id: userId, balance: 0 });
+                    .insert({ user_id: userId, balance: 0 }); // And here
                 if (!createError) setWallet({ balance: 0 });
-            } else if (walletData) {
-                setWallet(walletData);
+            } else if (data) {
+                setWallet(data);
             }
-
-            const { data: transData } = await supabase
-                .from('transactions')
-                .select('*')
-                .eq('user_id', userId)
-                .order('created_at', { ascending: false })
-                .limit(5);
-
-            if (transData) setTransactions(transData);
-
             setLoading(false);
         }
 
-        loadData();
+        loadWallet();
 
-        // 3. Realtime subscription for wallet
-        const walletChannel = supabase
+        // 3. Realtime subscription (Fixed ID reference)
+        const channel = supabase
             .channel('wallet_fund')
             .on('postgres_changes', {
                 event: '*',
@@ -105,27 +81,7 @@ export default function VtuDashboard() {
             })
             .subscribe();
 
-        // Realtime subscription for transactions
-        const txChannel = supabase
-            .channel(`user_tx_${userId}`)
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'transactions',
-                    filter: `user_id=eq.${userId}`,
-                },
-                (payload) => {
-                    setTransactions((prev) => [payload.new as Transaction, ...prev.slice(0, 4)]);
-                }
-            )
-            .subscribe();
-
-        return () => { 
-            supabase.removeChannel(walletChannel);
-            supabase.removeChannel(txChannel);
-        };
+        return () => { supabase.removeChannel(channel); };
     }, [session, isLoading, router]); // Added isLoading to dependencies
 
     const copyToClipboard = (text: string) => {
@@ -313,51 +269,23 @@ export default function VtuDashboard() {
                             <Link href="/dashboard/transactions" className="text-brand-mint text-xs font-bold hover:underline">View All</Link>
                         </div>
                         <div className="divide-y divide-white/5">
-                            {transactions.length === 0 ? (
-                                <div className="p-6 text-center text-brand-gray/60">
-                                    No recent transactions
-                                </div>
-                            ) : (
-                                transactions.map((tx) => (
-                                    <div key={tx.id} className="p-4 md:p-6 flex items-center justify-between hover:bg-white/[0.02] transition cursor-pointer group">
-                                        <div className="flex items-center gap-4">
-                                            <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-brand-mint group-hover:scale-110 transition-transform">
-                                                {tx.type === 'deposit' && <ArrowDownLeft size={18} />}
-                                                {tx.type === 'withdrawal' && <ArrowUpRight size={18} />}
-                                                {tx.type === 'airtime' && <Phone size={18} />}
-                                                {tx.type === 'data' && <Sparkles size={18} />}
-                                                {!['deposit', 'withdrawal', 'airtime', 'data'].includes(tx.type) && <Zap size={18} />}
-                                            </div>
-                                            <div>
-                                                <p className="text-sm font-bold">
-                                                    {tx.network ? tx.network.toUpperCase() + ' ' : ''}{tx.type.charAt(0).toUpperCase() + tx.type.slice(1)} {tx.type !== 'deposit' && tx.type !== 'withdrawal' ? 'Purchase' : ''}
-                                                </p>
-                                                <p className="text-[10px] text-brand-gray/40">
-                                                    {new Date(tx.created_at).toLocaleString('en-GB', {
-                                                        month: 'short',
-                                                        day: 'numeric',
-                                                        year: 'numeric',
-                                                        hour: '2-digit',
-                                                        minute: '2-digit',
-                                                    })}
-                                                </p>
-                                            </div>
+                            {[1, 2, 3, 4, 5].map((i) => (
+                                <div key={i} className="p-4 md:p-6 flex items-center justify-between hover:bg-white/[0.02] transition cursor-pointer group">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-brand-mint group-hover:scale-110 transition-transform">
+                                            <Zap size={18} />
                                         </div>
-                                        <div className="text-right">
-                                            <p className="text-sm font-black">
-                                                {tx.type === 'deposit' ? '+' : '-'} ₦{tx.amount.toFixed(2)}
-                                            </p>
-                                            <p className={`text-[9px] font-black uppercase ${
-                                                tx.status === 'success' || tx.status === 'completed' ? 'text-emerald-500' :
-                                                tx.status === 'pending' ? 'text-yellow-500' :
-                                                'text-red-500'
-                                            }`}>
-                                                {tx.status.charAt(0).toUpperCase() + tx.status.slice(1)}
-                                            </p>
+                                        <div>
+                                            <p className="text-sm font-bold">MTN Data Purchase</p>
+                                            <p className="text-[10px] text-brand-gray/40">Feb 01, 2026 • 14:20</p>
                                         </div>
                                     </div>
-                                ))
-                            )}
+                                    <div className="text-right">
+                                        <p className="text-sm font-black">- ₦450.00</p>
+                                        <p className="text-[9px] font-black uppercase text-emerald-500">Success</p>
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </section>
 
