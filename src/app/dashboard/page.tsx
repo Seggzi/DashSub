@@ -9,8 +9,21 @@ import {
     Wallet, LogOut, Zap, Smartphone, Lightbulb,
     Tv, GraduationCap, History, Bell, Plus,
     LayoutDashboard, Share2, User, Eye, EyeOff,
-    Copy, Check, ChevronRight, Menu, X, ChevronDown
+    Copy, Check, ChevronRight, Menu, X, ChevronDown,
+    ArrowDownLeft, ArrowUpRight, Phone, Sparkles
 } from 'lucide-react';
+
+interface Transaction {
+  id: string;
+  amount: number;
+  status: 'success' | 'failed' | 'pending' | 'completed';
+  created_at: string;
+  reference: string;
+  type: 'deposit' | 'airtime' | 'data' | 'withdrawal' | string;
+  phone_number?: string;
+  network?: string;
+  metadata?: any;
+}
 
 export default function VtuDashboard() {
     // FIX: Destructure isLoading (or whatever your provider calls the loading state)
@@ -19,6 +32,7 @@ export default function VtuDashboard() {
 
     // States
     const [wallet, setWallet] = useState<{ balance: number } | null>(null);
+    const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [showBalance, setShowBalance] = useState(true);
     const [copied, setCopied] = useState(false);
     const [isSidebarOpen, setSidebarOpen] = useState(false);
@@ -32,6 +46,7 @@ export default function VtuDashboard() {
         accNo: "8123456789",
         name: session?.user.email ? `DS-User-${session.user.email.split('@')[0]}` : 'DS-User'
     };
+    
 
     useEffect(() => {
         // FIX: If the session is still being fetched from storage, do NOT redirect yet.
@@ -47,28 +62,38 @@ export default function VtuDashboard() {
         const userId = session.user?.id;
         if (!userId) return;
 
-        async function loadWallet() {
-            const { data, error } = await supabase
+        async function loadData() {
+            const { data: walletData, error: walletError } = await supabase
                 .from('wallets')
                 .select('balance')
-                .eq('user_id', userId) // Using the constant here
+                .eq('user_id', userId)
                 .single();
 
-            if (error && error.code === 'PGRST116') {
+            if (walletError && walletError.code === 'PGRST116') {
                 const { error: createError } = await supabase
                     .from('wallets')
-                    .insert({ user_id: userId, balance: 0 }); // And here
+                    .insert({ user_id: userId, balance: 0 });
                 if (!createError) setWallet({ balance: 0 });
-            } else if (data) {
-                setWallet(data);
+            } else if (walletData) {
+                setWallet(walletData);
             }
+
+            const { data: transData } = await supabase
+                .from('transactions')
+                .select('*')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false })
+                .limit(5);
+
+            if (transData) setTransactions(transData);
+
             setLoading(false);
         }
 
-        loadWallet();
+        loadData();
 
-        // 3. Realtime subscription (Fixed ID reference)
-        const channel = supabase
+        // 3. Realtime subscription for wallet
+        const walletChannel = supabase
             .channel('wallet_fund')
             .on('postgres_changes', {
                 event: '*',
@@ -80,7 +105,27 @@ export default function VtuDashboard() {
             })
             .subscribe();
 
-        return () => { supabase.removeChannel(channel); };
+        // Realtime subscription for transactions
+        const txChannel = supabase
+            .channel(`user_tx_${userId}`)
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'transactions',
+                    filter: `user_id=eq.${userId}`,
+                },
+                (payload) => {
+                    setTransactions((prev) => [payload.new as Transaction, ...prev.slice(0, 4)]);
+                }
+            )
+            .subscribe();
+
+        return () => { 
+            supabase.removeChannel(walletChannel);
+            supabase.removeChannel(txChannel);
+        };
     }, [session, isLoading, router]); // Added isLoading to dependencies
 
     const copyToClipboard = (text: string) => {
@@ -133,7 +178,7 @@ export default function VtuDashboard() {
                             {servicesOpen && (
                                 <div className="ml-12 mt-2 space-y-2 border-l border-white/5 pl-4">
                                     <SubNavItem label="Buy Data" href="/dashboard/data" />
-                                    <SubNavItem label="Airtime Topup" href="/dashboard/airtime" />
+                                    <SubNavItem label="Airtime Topup" href="/dashboard/services/airtime" />
                                     <SubNavItem label="Electricity" href="/dashboard/electricity" />
                                     <SubNavItem label="Cable TV" href="/dashboard/cable" />
                                     <SubNavItem label="Exam PINs" href="/dashboard/exam" />
@@ -245,7 +290,7 @@ export default function VtuDashboard() {
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                             <ServiceBox icon={<Zap className="text-brand-mint" size={32} />} label="Buy Data" href="/dashboard/data" />
-                            <ServiceBox icon={<Smartphone className="text-blue-400" size={32} />} label="Airtime" href="/dashboard/airtime" />
+                            <ServiceBox icon={<Smartphone className="text-blue-400" size={32} />} label="Airtime" href="/dashboard/services/airtime" />
                             <ServiceBox icon={<Tv className="text-purple-400" size={32} />} label="Cable TV" href="/dashboard/cable" />
                             <ServiceBox icon={<Lightbulb className="text-yellow-400" size={32} />} label="Electricity" href="/dashboard/electricity" />
                             <ServiceBox icon={<GraduationCap className="text-pink-400" size={32} />} label="Exam PINs" href="/dashboard/exam" />
@@ -268,23 +313,51 @@ export default function VtuDashboard() {
                             <Link href="/dashboard/transactions" className="text-brand-mint text-xs font-bold hover:underline">View All</Link>
                         </div>
                         <div className="divide-y divide-white/5">
-                            {[1, 2, 3, 4, 5].map((i) => (
-                                <div key={i} className="p-4 md:p-6 flex items-center justify-between hover:bg-white/[0.02] transition cursor-pointer group">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-brand-mint group-hover:scale-110 transition-transform">
-                                            <Zap size={18} />
-                                        </div>
-                                        <div>
-                                            <p className="text-sm font-bold">MTN Data Purchase</p>
-                                            <p className="text-[10px] text-brand-gray/40">Feb 01, 2026 • 14:20</p>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className="text-sm font-black">- ₦450.00</p>
-                                        <p className="text-[9px] font-black uppercase text-emerald-500">Success</p>
-                                    </div>
+                            {transactions.length === 0 ? (
+                                <div className="p-6 text-center text-brand-gray/60">
+                                    No recent transactions
                                 </div>
-                            ))}
+                            ) : (
+                                transactions.map((tx) => (
+                                    <div key={tx.id} className="p-4 md:p-6 flex items-center justify-between hover:bg-white/[0.02] transition cursor-pointer group">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-brand-mint group-hover:scale-110 transition-transform">
+                                                {tx.type === 'deposit' && <ArrowDownLeft size={18} />}
+                                                {tx.type === 'withdrawal' && <ArrowUpRight size={18} />}
+                                                {tx.type === 'airtime' && <Phone size={18} />}
+                                                {tx.type === 'data' && <Sparkles size={18} />}
+                                                {!['deposit', 'withdrawal', 'airtime', 'data'].includes(tx.type) && <Zap size={18} />}
+                                            </div>
+                                            <div>
+                                                <p className="text-sm font-bold">
+                                                    {tx.network ? tx.network.toUpperCase() + ' ' : ''}{tx.type.charAt(0).toUpperCase() + tx.type.slice(1)} {tx.type !== 'deposit' && tx.type !== 'withdrawal' ? 'Purchase' : ''}
+                                                </p>
+                                                <p className="text-[10px] text-brand-gray/40">
+                                                    {new Date(tx.created_at).toLocaleString('en-GB', {
+                                                        month: 'short',
+                                                        day: 'numeric',
+                                                        year: 'numeric',
+                                                        hour: '2-digit',
+                                                        minute: '2-digit',
+                                                    })}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-sm font-black">
+                                                {tx.type === 'deposit' ? '+' : '-'} ₦{tx.amount.toFixed(2)}
+                                            </p>
+                                            <p className={`text-[9px] font-black uppercase ${
+                                                tx.status === 'success' || tx.status === 'completed' ? 'text-emerald-500' :
+                                                tx.status === 'pending' ? 'text-yellow-500' :
+                                                'text-red-500'
+                                            }`}>
+                                                {tx.status.charAt(0).toUpperCase() + tx.status.slice(1)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </section>
 
