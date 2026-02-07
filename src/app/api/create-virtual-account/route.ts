@@ -68,9 +68,7 @@ export async function POST(request: NextRequest) {
     const firstName = nameParts[0] || 'User';
     const lastName = nameParts.slice(1).join(' ') || 'DashSub';
 
-    console.log('👤 User:', authUser.user.email);
-    console.log('📱 Phone:', profile.phone_number);
-    console.log('🆔 Account Number:', profile.account_number);
+    console.log('👤 Creating account for:', authUser.user.email);
 
     // Create or get Paystack customer
     const customer = await paystackService.createOrGetCustomer(
@@ -86,8 +84,7 @@ export async function POST(request: NextRequest) {
       first_name: firstName,
       last_name: lastName,
       phone: profile.phone_number || '08000000000',
-      preferred_bank: 'wema-bank', // or 'titan-paystack' for Titan Paystack
-      account_number: profile.account_number,
+      preferred_bank: 'wema-bank',
     });
 
     // Save to database
@@ -106,7 +103,7 @@ export async function POST(request: NextRequest) {
       throw updateError;
     }
 
-    console.log('✅ Virtual account created and saved');
+    console.log('✅ Virtual account created successfully');
 
     return NextResponse.json({
       success: true,
@@ -118,7 +115,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error: any) {
-    console.error('❌ Error creating virtual account:', error);
+    console.error('❌ Error:', error);
     
     return NextResponse.json(
       { success: false, message: error.message || 'Failed to create virtual account' },
