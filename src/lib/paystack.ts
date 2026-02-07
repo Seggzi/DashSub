@@ -74,7 +74,6 @@ export const paystackService = {
     last_name: string;
     phone: string;
     preferred_bank: string;
-    account_number?: string;
   }): Promise<PaystackDedicatedAccount> {
     try {
       const response = await fetch(
@@ -95,7 +94,7 @@ export const paystackService = {
       const data = await response.json();
 
       if (!response.ok) {
-        console.error('Paystack error:', data);
+        console.error('❌ Paystack error:', data);
         throw new Error(data.message || 'Failed to create dedicated account');
       }
 

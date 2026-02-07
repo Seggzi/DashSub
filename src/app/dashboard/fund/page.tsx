@@ -5,19 +5,7 @@ import { useSupabaseSession } from '@/providers/SupabaseProvider';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import {
-  ArrowLeft,
-  Wallet,
-  Building2,
-  Copy,
-  CheckCircle2,
-  Loader2,
-  AlertCircle,
-  CreditCard,
-  History,
-  ShieldCheck,
-  Zap,
-} from 'lucide-react';
+import { Wallet, ArrowLeft, History, ShieldCheck, Zap, Loader2, Landmark, Copy, Check } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface Transaction {
@@ -35,21 +23,44 @@ declare global {
   }
 }
 
+// Helper functions for payment lock using localStorage
+const isPaymentLocked = (reference: string): boolean => {
+  if (typeof window === 'undefined') return false;
+  const locked = localStorage.getItem(`payment_lock_${reference}`);
+  return locked === 'true';
+};
+
+const lockPayment = (reference: string): void => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(`payment_lock_${reference}`, 'true');
+  console.log('🔒 LOCKED payment:', reference);
+};
+
+const unlockPayment = (reference: string): void => {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(`payment_lock_${reference}`);
+  console.log('🔓 UNLOCKED payment:', reference);
+};
+
 export default function FundWallet() {
   const { session, isLoading: sessionLoading } = useSupabaseSession();
   const router = useRouter();
-  const [profile, setProfile] = useState<any>(null);
-  const [wallet, setWallet] = useState<any>(null);
+  const [wallet, setWallet] = useState<{ balance: number } | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [creatingAccount, setCreatingAccount] = useState(false);
-  const [copied, setCopied] = useState('');
-  const [activeTab, setActiveTab] = useState<'transfer' | 'card'>('transfer');
   const [amount, setAmount] = useState('');
+  const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'card' | 'transfer'>('card');
+  const [copied, setCopied] = useState(false);
   const [paystackLoaded, setPaystackLoaded] = useState(false);
 
-  // Load Paystack script
+  const virtualAccount = {
+    bank: "Wema Bank",
+    accNo: "0123456789",
+    name: "DASH SUB - " + (session?.user?.email?.split('@')[0] || 'User')
+  };
+
+  // Load Paystack script manually
   useEffect(() => {
     const script = document.createElement('script');
     script.src = 'https://js.paystack.co/v1/inline.js';
@@ -64,17 +75,44 @@ export default function FundWallet() {
     };
   }, []);
 
+  const loadData = async () => {
+    if (!session?.user?.id) return;
+
+    const { data: walletData } = await supabase
+      .from('wallets')
+      .select('balance')
+      .eq('user_id', session.user.id)
+      .single();
+
+    console.log('Wallet Data:', walletData);
+    if (walletData) setWallet(walletData);
+
+    const { data: transData } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', session.user.id)
+      .eq('type', 'deposit')
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    console.log('Transactions Data:', transData);
+    if (transData) setTransactions(transData);
+    setLoading(false);
+  };
+
   useEffect(() => {
     if (sessionLoading) return;
+
     if (!session) {
       router.push('/auth');
       return;
     }
+
     loadData();
 
-    // Realtime updates
+    // Realtime subscription for wallet updates
     const channel = supabase
-      .channel('wallet_updates_fund')
+      .channel('wallet_updates')
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
@@ -88,62 +126,13 @@ export default function FundWallet() {
     };
   }, [session, sessionLoading, router]);
 
-  const loadData = async () => {
-    if (!session?.user?.id) return;
-
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', session.user.id)
-      .single();
-
-    const { data: walletData } = await supabase
-      .from('wallets')
-      .select('*')
-      .eq('user_id', session.user.id)
-      .single();
-
-    const { data: transData } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('user_id', session.user.id)
-      .eq('type', 'deposit')
-      .order('created_at', { ascending: false })
-      .limit(5);
-
-    setProfile(profileData);
-    setWallet(walletData);
-    setTransactions(transData || []);
-    setLoading(false);
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(virtualAccount.accNo);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
-  const createVirtualAccount = async () => {
-    setCreatingAccount(true);
-    
-    try {
-      const response = await fetch('/api/create-virtual-account', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: session!.user.id }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        toast.success('Virtual account created! 🎉');
-        loadData();
-      } else {
-        toast.error(data.message || 'Failed to create account');
-      }
-    } catch (error) {
-      console.error('Error:', error);
-      toast.error('An error occurred');
-    } finally {
-      setCreatingAccount(false);
-    }
-  };
-
-  const handleCardPayment = async () => {
+  const handlePaystack = async () => {
     const numAmount = Number(amount);
 
     if (numAmount < 100) {
@@ -152,7 +141,7 @@ export default function FundWallet() {
     }
 
     if (!paystackLoaded || !window.PaystackPop) {
-      toast.error('Payment system is loading. Please try again.');
+      toast.error('Payment system is loading. Please try again in a moment.');
       return;
     }
 
@@ -166,10 +155,10 @@ export default function FundWallet() {
       reference,
       status: 'pending',
       type: 'deposit',
-      payment_method: 'card',
     });
 
     if (insertError) {
+      console.error('Transaction insert error:', insertError);
       toast.error('Failed to create transaction');
       setIsProcessing(false);
       return;
@@ -181,21 +170,51 @@ export default function FundWallet() {
       amount: numAmount * 100,
       currency: 'NGN',
       ref: reference,
-      callback: async function (response: any) {
-        try {
-          await supabase
-            .from('transactions')
-            .update({ status: 'success' })
-            .eq('reference', reference);
-
-          toast.success('Payment successful! 🎉');
-          setAmount('');
-          loadData();
-        } catch (err) {
-          toast.error('Error processing payment');
-        } finally {
-          setIsProcessing(false);
+      callback: function (response: any) {
+        // ✅ Check localStorage lock FIRST
+        if (isPaymentLocked(reference)) {
+          console.log('⚠️ Payment already locked, ignoring duplicate callback');
+          return;
         }
+
+        // ✅ Lock IMMEDIATELY
+        lockPayment(reference);
+
+        // Process the payment
+        (async () => {
+          try {
+            console.log('💳 Paystack response:', response);
+
+            // ✅ ONLY update transaction status - trigger handles wallet update
+            const { error: updateError } = await supabase
+              .from('transactions')
+              .update({ status: 'success' })
+              .eq('reference', reference)
+              .eq('status', 'pending');
+
+            if (updateError) {
+              console.error('❌ Transaction update error:', updateError);
+              throw updateError;
+            }
+
+            console.log('✅ Transaction updated to success - database trigger will add funds automatically');
+
+            // ❌ REMOVED: RPC call (the trigger does this now)
+            // The database trigger automatically adds money to wallet!
+            
+            toast.success('Payment received! Your balance will update shortly.');
+            setAmount('');
+
+            // Clean up lock after 30 seconds
+            setTimeout(() => unlockPayment(reference), 30000);
+          } catch (err) {
+            console.error('❌ Payment processing error:', err);
+            toast.error('Error updating wallet. Please contact support.');
+            unlockPayment(reference);
+          } finally {
+            setIsProcessing(false);
+          }
+        })();
       },
       onClose: () => {
         setIsProcessing(false);
@@ -205,269 +224,190 @@ export default function FundWallet() {
     handler.openIframe();
   };
 
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(label);
-    toast.success(`${label} copied!`);
-    setTimeout(() => setCopied(''), 2000);
-  };
-
   if (sessionLoading || loading) {
     return (
-      <div className="min-h-screen bg-brand-primary flex items-center justify-center">
-        <Loader2 className="w-12 h-12 animate-spin text-brand-mint" />
+      <div className="min-h-screen bg-brand-carbon flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-brand-mint" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-brand-primary text-white p-6">
-      <div className="max-w-2xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <Link 
-            href="/dashboard" 
-            className="inline-flex items-center gap-2 text-brand-gray/60 hover:text-white transition-colors mb-6 group"
-          >
-            <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-            <span>Back to Dashboard</span>
-          </Link>
-          
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-gradient-to-br from-brand-mint to-emerald-400 rounded-2xl">
-              <Wallet className="w-6 h-6 text-brand-carbon" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold">Fund Wallet</h1>
-              <p className="text-brand-gray/60 text-sm mt-1">
-                Add money to your DashSub wallet
-              </p>
-            </div>
-          </div>
-        </div>
+    <div className="min-h-screen bg-brand-carbon text-white p-6">
+      {/* Header */}
+      <div className="max-w-md mx-auto mb-6">
+        <Link href="/dashboard" className="flex items-center gap-2 text-brand-gray hover:text-white transition-colors mb-4">
+          <ArrowLeft className="w-5 h-5" />
+          <span>Back</span>
+        </Link>
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          <Wallet className="w-6 h-6 text-brand-mint" />
+          Add Capital
+        </h1>
+      </div>
 
-        {/* Current Balance */}
-        <div className="bg-brand-carbon rounded-3xl p-6 border border-white/5 mb-6">
-          <p className="text-xs text-brand-gray/60 uppercase tracking-wider mb-2">
-            Current Balance
-          </p>
-          <p className="text-4xl font-black text-brand-mint">
+      {/* Wallet Card */}
+      <div className="max-w-md mx-auto bg-gradient-to-br from-brand-mint to-brand-mint/80 rounded-2xl p-6 mb-6 shadow-xl">
+        <p className="text-brand-carbon/70 text-sm mb-2">Available Funds</p>
+        {isProcessing ? (
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-6 h-6 animate-spin text-brand-carbon" />
+            <span className="text-brand-carbon text-sm">Processing payment...</span>
+          </div>
+        ) : (
+          <p className="text-4xl font-bold text-brand-carbon">
             ₦{wallet?.balance.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '0.00'}
           </p>
-        </div>
+        )}
+      </div>
 
-        {/* Tabs */}
-        <div className="bg-brand-carbon rounded-2xl p-1 flex gap-1 mb-6 border border-white/5">
-          <button
-            onClick={() => setActiveTab('transfer')}
-            className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'transfer' 
-                ? 'bg-brand-mint text-brand-carbon' 
-                : 'text-brand-gray/60 hover:text-white'
-            }`}
-          >
-            <Building2 className="w-4 h-4" />
-            Bank Transfer
-          </button>
-          <button
-            onClick={() => setActiveTab('card')}
-            className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${
-              activeTab === 'card' 
-                ? 'bg-brand-mint text-brand-carbon' 
-                : 'text-brand-gray/60 hover:text-white'
-            }`}
-          >
-            <CreditCard className="w-4 h-4" />
-            Card Payment
-          </button>
-        </div>
+      {/* Tabs */}
+      <div className="max-w-md mx-auto bg-brand-gray/10 rounded-xl p-1 flex gap-1 mb-6">
+        <button
+          onClick={() => setActiveTab('card')}
+          className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+            activeTab === 'card' 
+              ? 'bg-brand-mint text-brand-carbon shadow-lg' 
+              : 'text-brand-gray/40'
+          }`}
+        >
+          <Zap className="w-4 h-4 inline mr-1" />
+          Online Payment
+        </button>
+        <button
+          onClick={() => setActiveTab('transfer')}
+          className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+            activeTab === 'transfer' 
+              ? 'bg-brand-mint text-brand-carbon shadow-lg' 
+              : 'text-brand-gray/40'
+          }`}
+        >
+          <Landmark className="w-4 h-4 inline mr-1" />
+          Bank Transfer
+        </button>
+      </div>
 
-        {/* Content */}
-        {activeTab === 'transfer' ? (
-          profile?.virtual_account_number ? (
-            /* Virtual Account Card */
-            <div className="bg-gradient-to-br from-brand-mint to-emerald-400 rounded-3xl p-8 shadow-2xl mb-6">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="p-3 bg-white/20 backdrop-blur-sm rounded-2xl">
-                  <Building2 className="w-6 h-6 text-brand-carbon" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-brand-carbon">
-                    Your Dedicated Account
-                  </h2>
-                  <p className="text-brand-carbon/70 text-sm">
-                    Transfer to this account anytime
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {/* Bank Name */}
-                <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
-                  <p className="text-xs text-brand-carbon/70 uppercase tracking-wider mb-1">
-                    Bank Name
-                  </p>
-                  <p className="text-brand-carbon font-bold text-lg">
-                    {profile.virtual_account_bank}
-                  </p>
-                </div>
-
-                {/* Account Number */}
-                <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
-                  <p className="text-xs text-brand-carbon/70 uppercase tracking-wider mb-1">
-                    Account Number
-                  </p>
-                  <div className="flex items-center justify-between">
-                    <p className="text-brand-carbon font-black text-2xl tracking-wider">
-                      {profile.virtual_account_number}
-                    </p>
-                    <button
-                      onClick={() => copyToClipboard(profile.virtual_account_number, 'Account number')}
-                      className="p-3 hover:bg-white/10 rounded-xl transition-colors"
-                    >
-                      {copied === 'Account number' ? (
-                        <CheckCircle2 className="w-5 h-5 text-brand-carbon" />
-                      ) : (
-                        <Copy className="w-5 h-5 text-brand-carbon" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Account Name */}
-                <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4">
-                  <p className="text-xs text-brand-carbon/70 uppercase tracking-wider mb-1">
-                    Account Name
-                  </p>
-                  <p className="text-brand-carbon font-bold text-lg">
-                    {profile.virtual_account_name}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-6 p-4 bg-brand-carbon/20 backdrop-blur-sm rounded-2xl">
-                <div className="flex gap-3">
-                  <Zap className="w-5 h-5 text-brand-carbon flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-brand-carbon text-sm font-semibold mb-1">
-                      Instant Credit
-                    </p>
-                    <p className="text-brand-carbon/80 text-xs">
-                      Transfers reflect within seconds. Use this account anytime!
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* Create Account */
-            <div className="bg-brand-carbon rounded-3xl p-8 border border-white/5 text-center">
-              <div className="w-20 h-20 bg-brand-mint/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Building2 className="w-10 h-10 text-brand-mint" />
-              </div>
-              <h3 className="text-xl font-bold mb-2">Get Your Virtual Account</h3>
-              <p className="text-brand-gray/60 mb-6 max-w-md mx-auto">
-                Create a dedicated account number for instant wallet funding
-              </p>
-              <button
-                onClick={createVirtualAccount}
-                disabled={creatingAccount}
-                className="bg-gradient-to-r from-brand-mint to-emerald-400 text-brand-carbon font-black px-8 py-4 rounded-2xl hover:shadow-2xl transition-all disabled:opacity-50 inline-flex items-center gap-3"
-              >
-                {creatingAccount ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Creating...
-                  </>
-                ) : (
-                  <>
-                    <Building2 className="w-5 h-5" />
-                    Create Virtual Account
-                  </>
-                )}
-              </button>
-            </div>
-          )
-        ) : (
-          /* Card Payment */
-          <div className="bg-brand-carbon rounded-3xl p-6 border border-white/5">
+      {/* Content Area */}
+      <div className="max-w-md mx-auto">
+        {activeTab === 'card' ? (
+          <div className="bg-brand-gray/10 rounded-xl p-6">
             <h3 className="text-lg font-semibold mb-4">Fund with Card</h3>
 
             <div className="mb-4">
-              <label className="block text-sm text-brand-gray/60 mb-2">Amount (₦)</label>
+              <label className="block text-sm text-brand-gray mb-2">Amount (₦)</label>
               <input
                 type="number"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
                 placeholder="Enter amount"
-                className="w-full bg-brand-primary border-2 border-white/5 rounded-2xl px-5 py-4 text-white text-lg focus:outline-none focus:border-brand-mint transition-all"
+                className="w-full bg-brand-carbon border border-brand-gray/30 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-mint transition-colors"
                 min="100"
               />
-              <p className="text-xs text-brand-gray/60 mt-2">Minimum: ₦100</p>
+              <p className="text-xs text-brand-gray mt-1">Minimum: ₦100</p>
             </div>
 
             <button
-              onClick={handleCardPayment}
+              onClick={handlePaystack}
               disabled={isProcessing || !amount || Number(amount) < 100 || !paystackLoaded}
-              className="w-full bg-gradient-to-r from-brand-mint to-emerald-400 text-brand-carbon font-black py-4 rounded-2xl hover:shadow-2xl transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+              className="w-full bg-brand-mint text-brand-carbon font-bold py-3 rounded-lg hover:bg-brand-mint/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isProcessing ? (
                 <>
-                  <Loader2 className="w-6 h-6 animate-spin" />
+                  <Loader2 className="w-5 h-5 animate-spin" />
                   Processing...
                 </>
               ) : !paystackLoaded ? (
                 <>
-                  <Loader2 className="w-6 h-6 animate-spin" />
+                  <Loader2 className="w-5 h-5 animate-spin" />
                   Loading...
                 </>
               ) : (
                 <>
-                  <ShieldCheck className="w-6 h-6" />
+                  <ShieldCheck className="w-5 h-5" />
                   Pay Securely
                 </>
               )}
             </button>
           </div>
-        )}
+        ) : (
+          <div className="bg-brand-gray/10 rounded-xl p-6">
+            <h3 className="text-lg font-semibold mb-4">Bank Transfer Details</h3>
 
-        {/* Recent Transactions */}
-        <div className="mt-8">
-          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-            <History className="w-5 h-5" />
-            Recent Deposits
-          </h3>
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm text-brand-gray mb-1">Bank Name</p>
+                <p className="font-semibold">{virtualAccount.bank}</p>
+              </div>
 
-          {transactions.length === 0 ? (
-            <div className="bg-brand-carbon rounded-2xl p-8 text-center border border-white/5">
-              <p className="text-brand-gray/60">No deposit history yet</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {transactions.map((tx) => (
-                <div key={tx.id} className="bg-brand-carbon rounded-2xl p-4 border border-white/5 flex justify-between items-center">
-                  <div>
-                    <p className="font-semibold">₦{tx.amount.toLocaleString()}</p>
-                    <p className="text-xs text-brand-gray/60">
-                      {new Date(tx.created_at).toLocaleString()}
-                    </p>
-                  </div>
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                      tx.status === 'completed' || tx.status === 'success'
-                        ? 'bg-green-500/20 text-green-400'
-                        : tx.status === 'pending'
-                        ? 'bg-yellow-500/20 text-yellow-400'
-                        : 'bg-red-500/20 text-red-400'
-                    }`}
+              <div>
+                <p className="text-sm text-brand-gray mb-1">Account Number</p>
+                <div className="flex items-center gap-2">
+                  <p className="font-semibold text-xl">{virtualAccount.accNo}</p>
+                  <button
+                    onClick={copyToClipboard}
+                    className="p-2 hover:bg-brand-gray/20 rounded-lg transition-colors"
                   >
-                    {tx.status}
-                  </span>
+                    {copied ? (
+                      <Check className="w-4 h-4 text-brand-mint" />
+                    ) : (
+                      <Copy className="w-4 h-4" />
+                    )}
+                  </button>
                 </div>
-              ))}
+              </div>
+
+              <div>
+                <p className="text-sm text-brand-gray mb-1">Account Name</p>
+                <p className="font-semibold">{virtualAccount.name}</p>
+              </div>
+
+              <div className="bg-brand-mint/10 border border-brand-mint/30 rounded-lg p-4 mt-4">
+                <p className="text-sm text-brand-mint">
+                  <ShieldCheck className="w-4 h-4 inline mr-1" />
+                  Transfers are usually credited within 5 minutes
+                </p>
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+      </div>
+
+      {/* Recent Transactions */}
+      <div className="max-w-md mx-auto mt-8">
+        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <History className="w-5 h-5" />
+          Recent Deposits
+        </h3>
+
+        {transactions.length === 0 ? (
+          <div className="bg-brand-gray/10 rounded-xl p-8 text-center text-brand-gray">
+            <p>No deposit history yet</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {transactions.map((tx) => (
+              <div key={tx.id} className="bg-brand-gray/10 rounded-xl p-4 flex justify-between items-center">
+                <div>
+                  <p className="font-semibold">₦{tx.amount.toLocaleString()}</p>
+                  <p className="text-xs text-brand-gray">
+                    {new Date(tx.created_at).toLocaleDateString()}
+                  </p>
+                </div>
+                <span
+                  className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                    tx.status === 'completed' || tx.status === 'success'
+                      ? 'bg-green-500/20 text-green-400'
+                      : tx.status === 'pending'
+                      ? 'bg-yellow-500/20 text-yellow-400'
+                      : 'bg-red-500/20 text-red-400'
+                  }`}
+                >
+                  {tx.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
