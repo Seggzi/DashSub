@@ -10,7 +10,8 @@ import {
     Tv, GraduationCap, History, Bell, Plus,
     LayoutDashboard, Share2, User, Eye, EyeOff,
     Copy, Check, ChevronRight, Menu, X, ChevronDown,
-    ArrowDownLeft, ArrowUpRight, Phone, Sparkles
+    ArrowDownLeft, ArrowUpRight, Phone, Sparkles,
+    CreditCard
 } from 'lucide-react';
 
 interface Transaction {
@@ -25,44 +26,53 @@ interface Transaction {
   metadata?: any;
 }
 
+interface Profile {
+  id: string;
+  full_name?: string;
+  phone_number?: string;
+  account_number?: string;
+  virtual_account_number?: string;
+  virtual_account_bank?: string;
+  virtual_account_name?: string;
+}
+
 export default function VtuDashboard() {
-    // FIX: Destructure isLoading (or whatever your provider calls the loading state)
     const { session, isLoading } = useSupabaseSession(); 
     const router = useRouter();
 
     // States
     const [wallet, setWallet] = useState<{ balance: number } | null>(null);
+    const [profile, setProfile] = useState<Profile | null>(null);
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [showBalance, setShowBalance] = useState(true);
     const [copied, setCopied] = useState(false);
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [servicesOpen, setServicesOpen] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [unreadNotifications] = useState(3); // Placeholder — real count from DB later
-
-    // Virtual Account (placeholder — real from Paystack later)
-    const virtualAccount = {
-        bank: "Wema Bank",
-        accNo: "8123456789",
-        name: session?.user.email ? `DS-User-${session.user.email.split('@')[0]}` : 'DS-User'
-    };
-    
+    const [unreadNotifications] = useState(3);
 
     useEffect(() => {
-        // FIX: If the session is still being fetched from storage, do NOT redirect yet.
         if (isLoading) return;
 
-        // 1. If no session, redirect and stop execution
         if (!session) {
             router.push('/auth');
             return;
         }
 
-        // 2. Capture the ID in a constant to satisfy TypeScript
         const userId = session.user?.id;
         if (!userId) return;
 
         async function loadData() {
+            // Load profile
+            const { data: profileData } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', userId)
+                .single();
+
+            if (profileData) setProfile(profileData);
+
+            // Load wallet
             const { data: walletData, error: walletError } = await supabase
                 .from('wallets')
                 .select('balance')
@@ -78,6 +88,7 @@ export default function VtuDashboard() {
                 setWallet(walletData);
             }
 
+            // Load transactions
             const { data: transData } = await supabase
                 .from('transactions')
                 .select('*')
@@ -92,7 +103,7 @@ export default function VtuDashboard() {
 
         loadData();
 
-        // 3. Realtime subscription for wallet
+        // Realtime subscriptions
         const walletChannel = supabase
             .channel('wallet_fund')
             .on('postgres_changes', {
@@ -105,7 +116,6 @@ export default function VtuDashboard() {
             })
             .subscribe();
 
-        // Realtime subscription for transactions
         const txChannel = supabase
             .channel(`user_tx_${userId}`)
             .on(
@@ -126,7 +136,7 @@ export default function VtuDashboard() {
             supabase.removeChannel(walletChannel);
             supabase.removeChannel(txChannel);
         };
-    }, [session, isLoading, router]); // Added isLoading to dependencies
+    }, [session, isLoading, router]);
 
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text);
@@ -139,7 +149,6 @@ export default function VtuDashboard() {
         router.push('/auth');
     };
 
-    // FIX: If session is still loading, show the spinner before we even try to check session existence
     if (isLoading || loading) {
         return (
             <div className="min-h-screen bg-brand-primary flex items-center justify-center">
@@ -151,7 +160,7 @@ export default function VtuDashboard() {
     return (
         <div className="min-h-screen bg-brand-primary text-white flex overflow-hidden">
 
-            {/* --- SIDEBAR --- */}
+            {/* SIDEBAR */}
             <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-brand-carbon border-r border-white/5 transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 transition-transform duration-300 ease-in-out`}>
                 <div className="flex flex-col h-full p-6 overflow-y-auto custom-scrollbar">
                     <div className="flex items-center gap-3 mb-10 px-2">
@@ -200,7 +209,7 @@ export default function VtuDashboard() {
                 </div>
             </aside>
 
-            {/* --- MAIN CONTENT --- */}
+            {/* MAIN CONTENT */}
             <main className="flex-1 lg:ml-72 h-screen overflow-y-auto">
 
                 {/* Top Welcome Bar */}
@@ -236,9 +245,11 @@ export default function VtuDashboard() {
                             <h1 className="text-xl md:text-2xl font-black">Account Overview</h1>
                             <p className="text-brand-gray/60 text-xs md:text-sm">Manage your balance and VTU services</p>
                         </div>
-                        <div className="hidden md:block bg-brand-mint/10 text-brand-mint px-4 py-2 rounded-full text-xs font-bold border border-brand-mint/20">
-                            ID: 8842910
-                        </div>
+                        {profile?.account_number && (
+                            <div className="hidden md:block bg-brand-mint/10 text-brand-mint px-4 py-2 rounded-full text-xs font-bold border border-brand-mint/20">
+                                ID: {profile.account_number}
+                            </div>
+                        )}
                     </div>
 
                     {/* WALLET & VIRTUAL ACCOUNT CARD */}
@@ -264,23 +275,50 @@ export default function VtuDashboard() {
                             </div>
                         </div>
 
-                        {/* Virtual Account (Opay Style) */}
-                        <div className="bg-brand-mint/5 border border-brand-mint/10 rounded-[2rem] p-6 flex flex-col justify-between">
-                            <div>
-                                <div className="flex justify-between items-center mb-4">
-                                    <span className="text-[10px] font-black uppercase tracking-widest text-brand-mint/60">Automated Funding</span>
-                                    <div className="bg-brand-mint text-brand-carbon px-2 py-0.5 rounded text-[8px] font-black uppercase">Active</div>
+                        {/* Virtual Account */}
+                        {profile?.virtual_account_number ? (
+                            <div className="bg-brand-mint/5 border border-brand-mint/10 rounded-[2rem] p-6 flex flex-col justify-between">
+                                <div>
+                                    <div className="flex justify-between items-center mb-4">
+                                        <span className="text-[10px] font-black uppercase tracking-widest text-brand-mint/60">
+                                            Automated Funding
+                                        </span>
+                                        <div className="bg-brand-mint text-brand-carbon px-2 py-0.5 rounded text-[8px] font-black uppercase">
+                                            Active
+                                        </div>
+                                    </div>
+                                    <p className="text-xs text-brand-gray/60 mb-1">{profile.virtual_account_bank}</p>
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-xl font-black tracking-tight">{profile.virtual_account_number}</p>
+                                        <button 
+                                            onClick={() => copyToClipboard(profile.virtual_account_number!)} 
+                                            className="p-2 hover:bg-brand-mint/20 rounded-lg text-brand-mint transition relative"
+                                        >
+                                            {copied ? <Check size={16} /> : <Copy size={16} />}
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-brand-gray/60 mt-2">{profile.virtual_account_name}</p>
                                 </div>
-                                <p className="text-xs text-brand-gray/60 mb-1">{virtualAccount.bank}</p>
-                                <div className="flex items-center justify-between">
-                                    <p className="text-xl font-black tracking-tight">{virtualAccount.accNo}</p>
-                                    <button onClick={() => copyToClipboard(virtualAccount.accNo)} className="p-2 hover:bg-brand-mint/20 rounded-lg text-brand-mint transition relative">
-                                        {copied ? <Check size={16} /> : <Copy size={16} />}
-                                    </button>
-                                </div>
+                                <p className="text-[10px] font-bold text-brand-gray/40 mt-4 italic">
+                                    Funds sent to this account reflect instantly in your balance.
+                                </p>
                             </div>
-                            <p className="text-[10px] font-bold text-brand-gray/40 mt-4 italic">Funds sent to this account reflect instantly in your balance.</p>
-                        </div>
+                        ) : (
+                            <div className="bg-brand-carbon border border-white/5 rounded-[2rem] p-6 text-center">
+                                <CreditCard className="w-12 h-12 text-brand-mint/40 mx-auto mb-3" />
+                                <p className="text-sm font-bold mb-2">Get Virtual Account</p>
+                                <p className="text-xs text-brand-gray/60 mb-4">
+                                    Create a dedicated account for instant funding
+                                </p>
+                                <Link
+                                    href="/dashboard/fund"
+                                    className="inline-flex items-center gap-2 bg-brand-mint text-brand-carbon px-4 py-2 rounded-xl text-xs font-bold hover:scale-105 transition-transform"
+                                >
+                                    <Plus size={14} />
+                                    Create Now
+                                </Link>
+                            </div>
+                        )}
                     </div>
 
                     {/* QUICK SERVICES SECTION */}
@@ -306,7 +344,7 @@ export default function VtuDashboard() {
                         <Share2 size={24} className="text-brand-mint/40 hidden sm:block" />
                     </div>
 
-                    {/* RECENT TRANSACTIONS (OPAY STYLE) */}
+                    {/* RECENT TRANSACTIONS */}
                     <section className="bg-brand-carbon rounded-[2rem] border border-white/5 overflow-hidden">
                         <div className="p-6 border-b border-white/5 flex justify-between items-center">
                             <h3 className="font-bold text-sm uppercase tracking-widest text-brand-gray/50">Recent Transactions</h3>
