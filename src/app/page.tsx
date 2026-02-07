@@ -151,7 +151,7 @@ export default function Home() {
                 <p className="text-[11px] text-gray-500 leading-relaxed mb-6 font-medium max-w-[220px]">
                   {s.desc}
                 </p>
-                <Link href="/signup" className="inline-flex items-center gap-2 text-[10px] font-black text-brand-primary uppercase tracking-widest border-b border-transparent hover:border-brand-primary transition-all">
+                <Link href="/auth" className="inline-flex items-center gap-2 text-[10px] font-black text-brand-primary uppercase tracking-widest border-b border-transparent hover:border-brand-primary transition-all">
                   Proceed <ArrowRight size={10} />
                 </Link>
               </div>
