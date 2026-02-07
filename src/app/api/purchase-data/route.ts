@@ -12,12 +12,6 @@ const supabase = createClient(
   }
 );
 
-const COMMISSION_RATE = 0.02;
-
-function calculateCommission(amount: number): number {
-  return Math.ceil(amount * COMMISSION_RATE);
-}
-
 async function purchaseDataWithClubkonnect(
   networkCode: string,
   phoneNumber: string,
@@ -26,107 +20,43 @@ async function purchaseDataWithClubkonnect(
 ) {
   const CLUBKONNECT_USER_ID = process.env.CLUBKONNECT_USER_ID;
   const CLUBKONNECT_API_KEY = process.env.CLUBKONNECT_API_KEY;
-  const CLUBKONNECT_BASE_URL = process.env.CLUBKONNECT_BASE_URL || 'https://www.nellobytesystems.com';
+  const CLUBKONNECT_BASE_URL = 'https://www.nellobytesystems.com';
   
   if (!CLUBKONNECT_USER_ID || !CLUBKONNECT_API_KEY) {
-    console.error('❌ Clubkonnect credentials not configured');
-    throw new Error('Clubkonnect API credentials not configured');
+    throw new Error('Clubkonnect credentials not configured');
   }
 
-  console.log('🚀 Calling Clubkonnect Data API...');
-  console.log('Network Code:', networkCode);
-  console.log('Phone:', phoneNumber);
-  console.log('Plan Code:', planCode);
-  console.log('Reference:', reference);
+  const url = new URL(`${CLUBKONNECT_BASE_URL}/APIDatabundleV1.asp`);
+  url.searchParams.append('UserID', CLUBKONNECT_USER_ID);
+  url.searchParams.append('APIKey', CLUBKONNECT_API_KEY);
+  url.searchParams.append('MobileNetwork', networkCode);
+  url.searchParams.append('DataPlan', planCode);
+  url.searchParams.append('MobileNumber', phoneNumber);
+  url.searchParams.append('RequestID', reference);
 
-  try {
-    const url = new URL(`${CLUBKONNECT_BASE_URL}/APIDatabundleV1.asp`);
-    url.searchParams.append('UserID', CLUBKONNECT_USER_ID);
-    url.searchParams.append('APIKey', CLUBKONNECT_API_KEY);
-    url.searchParams.append('MobileNetwork', networkCode);
-    url.searchParams.append('DataPlan', planCode);
-    url.searchParams.append('MobileNumber', phoneNumber);
-    url.searchParams.append('RequestID', reference);
+  console.log('📡 Calling Clubkonnect:', {
+    network: networkCode,
+    plan: planCode,
+    phone: phoneNumber,
+  });
 
-    console.log('📡 Request URL:', url.toString().replace(CLUBKONNECT_API_KEY, '***'));
+  const response = await fetch(url.toString());
+  const data = await response.json();
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-    });
+  console.log('📡 Clubkonnect response:', data);
 
-    console.log('📡 Response status:', response.status);
+  const isSuccess = 
+    data.status === 'ORDER_RECEIVED' || 
+    data.statuscode === '100' ||
+    data.status === 'ORDER_COMPLETED' ||
+    data.statuscode === '200';
 
-    const responseText = await response.text();
-    console.log('📡 Raw response:', responseText);
-
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (e) {
-      console.error('❌ Failed to parse response:', e);
-      return {
-        success: false,
-        message: `Invalid response: ${responseText.substring(0, 100)}`,
-        provider_response: { raw: responseText },
-      };
-    }
-
-    console.log('📡 Parsed response:', JSON.stringify(data, null, 2));
-
-    // Error handling
-    if (data.status === 'INVALID_CREDENTIALS' || data.status === 'MISSING_CREDENTIALS') {
-      return {
-        success: false,
-        message: 'Invalid API credentials. Contact support.',
-        provider_response: data,
-      };
-    }
-
-    if (data.status === 'INSUFFICIENT_BALANCE') {
-      return {
-        success: false,
-        message: 'Service temporarily unavailable. Please try again later.',
-        provider_response: data,
-      };
-    }
-
-    if (data.status === 'INVALID_DATAPLAN') {
-      return {
-        success: false,
-        message: 'Invalid data plan. Please select a different plan.',
-        provider_response: data,
-      };
-    }
-
-    if (data.status === 'INVALID_RECIPIENT') {
-      return {
-        success: false,
-        message: 'Invalid phone number format.',
-        provider_response: data,
-      };
-    }
-
-    // Success indicators
-    const isSuccess = 
-      data.status === 'ORDER_RECEIVED' || 
-      data.statuscode === '100' ||
-      data.status === 'ORDER_COMPLETED' ||
-      data.statuscode === '200';
-
-    return {
-      success: isSuccess,
-      message: isSuccess ? 'Data purchase successful' : (data.status || 'Purchase failed'),
-      provider_reference: data.orderid || reference,
-      provider_response: data,
-    };
-  } catch (error: any) {
-    console.error('❌ Clubkonnect error:', error);
-    return {
-      success: false,
-      message: `Network error: ${error.message}`,
-      provider_response: { error: error.message },
-    };
-  }
+  return {
+    success: isSuccess,
+    message: isSuccess ? 'Data delivered successfully' : (data.status || 'Purchase failed'),
+    provider_reference: data.orderid,
+    provider_response: data,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -134,33 +64,42 @@ export async function POST(request: NextRequest) {
   
   try {
     const body = await request.json();
-    const { userId, phoneNumber, planCode, network, networkCode, amount, reference } = body;
+    const { userId, phoneNumber, planCode, network, networkCode, reference } = body;
 
-    console.log('📥 Request:', { userId, phoneNumber, planCode, network, networkCode, amount, reference });
+    console.log('📥 Request:', { userId, phoneNumber, planCode, network, networkCode, reference });
 
     // Validation
-    if (!userId || !phoneNumber || !planCode || !amount || !reference || !networkCode) {
+    if (!userId || !phoneNumber || !planCode || !reference || !networkCode) {
       return NextResponse.json(
         { success: false, message: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    // Validate phone number
-    const cleanedPhone = phoneNumber.replace(/\D/g, '');
-    if (cleanedPhone.length !== 11 || !cleanedPhone.startsWith('0')) {
+    // Get plan details from database
+    const { data: plan, error: planError } = await supabase
+      .from('data_plans')
+      .select('*')
+      .eq('network_id', network)
+      .eq('plan_code', planCode)
+      .eq('is_active', true)
+      .single();
+
+    if (planError || !plan) {
+      console.error('❌ Plan not found:', planError);
       return NextResponse.json(
-        { success: false, message: 'Invalid phone number format' },
+        { success: false, message: 'Plan not found or inactive' },
         { status: 400 }
       );
     }
 
-    const commission = calculateCommission(amount);
-    const totalCharge = amount + commission;
+    console.log('💰 Plan Details:');
+    console.log(`   Name: ${plan.plan_name}`);
+    console.log(`   Cost Price: ₦${plan.cost_price}`);
+    console.log(`   Selling Price: ₦${plan.selling_price}`);
+    console.log(`   Your Profit: ₦${plan.selling_price - plan.cost_price}`);
 
-    console.log(`💰 Data: ₦${amount}, Fee: ₦${commission}, Total: ₦${totalCharge}`);
-
-    // Get wallet
+    // Check wallet balance (user pays SELLING price)
     const { data: wallet, error: walletError } = await supabase
       .from('wallets')
       .select('balance')
@@ -170,30 +109,29 @@ export async function POST(request: NextRequest) {
     if (walletError || !wallet) {
       console.error('❌ Wallet error:', walletError);
       return NextResponse.json(
-        { success: false, message: 'Failed to fetch wallet' },
+        { success: false, message: 'Wallet not found' },
         { status: 500 }
       );
     }
 
-    console.log('💵 Current balance:', wallet.balance);
+    console.log(`💵 User balance: ₦${wallet.balance}`);
 
-    // Check balance
-    if (wallet.balance < totalCharge) {
+    if (wallet.balance < plan.selling_price) {
       return NextResponse.json(
         {
           success: false,
-          message: `Insufficient balance. You need ₦${totalCharge.toLocaleString()} (₦${amount.toLocaleString()} + ₦${commission.toLocaleString()} fee)`
+          message: `Insufficient balance. You need ₦${plan.selling_price.toLocaleString()}`
         },
         { status: 400 }
       );
     }
 
-    // Create transaction
+    // Create transaction with SELLING price
     const { data: transaction, error: txError } = await supabase
       .from('transactions')
       .insert({
         user_id: userId,
-        amount: totalCharge,
+        amount: plan.selling_price, // User pays selling price
         type: 'data',
         status: 'pending',
         reference: reference,
@@ -214,10 +152,15 @@ export async function POST(request: NextRequest) {
 
     console.log('✅ Transaction created');
 
-    // Purchase data
+    // Purchase from Clubkonnect (they receive COST price, you keep profit)
     let providerResult;
     try {
-      providerResult = await purchaseDataWithClubkonnect(networkCode, phoneNumber, planCode, reference);
+      providerResult = await purchaseDataWithClubkonnect(
+        networkCode,
+        phoneNumber,
+        planCode,
+        reference
+      );
     } catch (error: any) {
       console.error('❌ Provider error:', error);
       
@@ -235,10 +178,10 @@ export async function POST(request: NextRequest) {
     console.log('📡 Provider result:', providerResult);
 
     if (providerResult.success) {
-      console.log('💸 Deducting from wallet...');
+      console.log('💸 Deducting from user wallet...');
 
-      // Deduct from wallet
-      const newBalance = wallet.balance - totalCharge;
+      // Deduct SELLING price from user wallet
+      const newBalance = wallet.balance - plan.selling_price;
       const { error: deductError } = await supabase
         .from('wallets')
         .update({ balance: newBalance })
@@ -258,9 +201,9 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      console.log('✅ Wallet deducted. New balance:', newBalance);
+      console.log(`✅ New balance: ₦${newBalance}`);
 
-      // Update transaction
+      // Update transaction to success
       await supabase
         .from('transactions')
         .update({
@@ -270,15 +213,15 @@ export async function POST(request: NextRequest) {
         .eq('id', transaction.id);
 
       console.log('🎉 Data purchase completed!');
+      console.log(`💵 User paid: ₦${plan.selling_price}`);
+      console.log(`💸 Provider cost: ₦${plan.cost_price}`);
+      console.log(`💰 Your profit: ₦${plan.selling_price - plan.cost_price}`);
 
       return NextResponse.json({
         success: true,
         message: providerResult.message,
         new_balance: newBalance,
         transaction_id: transaction.id,
-        data_amount: amount,
-        commission: commission,
-        total_charged: totalCharge,
       });
     } else {
       console.error('❌ Provider failed:', providerResult.message);
@@ -296,7 +239,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error('❌ API error:', error);
     return NextResponse.json(
-      { success: false, message: 'Internal server error: ' + error.message },
+      { success: false, message: 'Internal error: ' + error.message },
       { status: 500 }
     );
   }

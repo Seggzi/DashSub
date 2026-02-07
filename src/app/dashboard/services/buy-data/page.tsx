@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useSupabaseSession } from '@/providers/SupabaseProvider';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
@@ -11,14 +11,16 @@ import {
   Wallet,
   Loader2,
   CheckCircle2,
-  Info,
   Sparkles,
   Zap,
-  TrendingUp,
   Clock,
   ChevronRight,
   Signal,
   Package,
+  Flame,
+  Sun,
+  CalendarDays,
+  Calendar,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -41,50 +43,55 @@ interface DataPlan {
   plan_duration: string;
 }
 
-const COMMISSION_RATE = 0.02;
-
 const NETWORKS = [
-  {
-    id: '01',
-    networkCode: '01',
-    name: 'MTN',
-    icon: <span className="text-4xl">📱</span>,
-    darkIcon: <span className="text-4xl">📱</span>,
-    description: 'All Plans'
-  },
-  {
-    id: '02',
-    networkCode: '02',
-    name: 'Glo',
-    icon: <span className="text-4xl">🌐</span>,
-    darkIcon: <span className="text-4xl">🌐</span>,
-    description: 'All Plans'
-  },
-  {
-    id: '04',
-    networkCode: '04',
-    name: 'Airtel',
-    icon: <span className="text-4xl">📞</span>,
-    darkIcon: <span className="text-4xl">📞</span>,
-    description: 'All Plans'
-  },
-  {
-    id: '03',
-    networkCode: '03',
-    name: '9mobile',
-    icon: <span className="text-4xl">📲</span>,
-    darkIcon: <span className="text-4xl">📲</span>,
-    description: 'All Plans'
-  },
+  { id: '01', networkCode: '01', name: 'MTN', icon: <span className="text-3xl">📱</span>, description: 'All Plans' },
+  { id: '02', networkCode: '02', name: 'Glo', icon: <span className="text-3xl">🌐</span>, description: 'All Plans' },
+  { id: '04', networkCode: '04', name: 'Airtel', icon: <span className="text-3xl">📞</span>, description: 'All Plans' },
+  { id: '03', networkCode: '03', name: '9mobile', icon: <span className="text-3xl">📲</span>, description: 'All Plans' },
 ];
 
-const calculateCommission = (amount: number): number => {
-  return Math.ceil(amount * COMMISSION_RATE);
-};
+function parsePlanName(planName: string) {
+  const sizeMatch = planName.match(/(\d+(?:\.\d+)?)\s*(MB|GB)/i);
+  const dataSize = sizeMatch ? `${sizeMatch[1]}${sizeMatch[2]}` : '';
+
+  const durationMatch = planName.match(/(\d+)\s*(day|days)/i);
+  const duration = durationMatch ? `${durationMatch[1]} ${durationMatch[2].toLowerCase() === 'day' ? 'Day' : 'Days'}` : '';
+
+  let planType = '';
+  if (planName.includes('SME')) planType = 'SME';
+  else if (planName.includes('Direct Data')) planType = 'Direct';
+  else if (planName.includes('Awoof Data')) planType = 'Awoof';
+  else if (planName.includes('Night Plan')) planType = 'Night';
+  else if (planName.includes('Weekend')) planType = 'Weekend';
+
+  return { dataSize, duration, planType, fullName: planName };
+}
+
+function categorizePlans(plans: DataPlan[]) {
+  const hot: DataPlan[] = [];
+  const daily: DataPlan[] = [];
+  const weekly: DataPlan[] = [];
+  const monthly: DataPlan[] = [];
+
+  plans.forEach((plan) => {
+    const duration = plan.plan_duration.toLowerCase();
+    if (duration.includes('1 day') || duration.includes('2 days') || duration.includes('3 days')) {
+      daily.push(plan);
+      if (plan.plan_amount >= 100 && plan.plan_amount <= 500) hot.push(plan);
+    } else if (duration.includes('7 days') || duration.includes('14 days')) {
+      weekly.push(plan);
+    } else if (duration.includes('30 days') || duration.includes('60 days') || duration.includes('90 days')) {
+      monthly.push(plan);
+    }
+  });
+
+  return { hot, daily, weekly, monthly };
+}
 
 export default function BuyData() {
   const { session, isLoading: sessionLoading } = useSupabaseSession();
   const router = useRouter();
+
   const [wallet, setWallet] = useState<{ balance: number } | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -94,11 +101,15 @@ export default function BuyData() {
   const [loading, setLoading] = useState(true);
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [isPurchasing, setIsPurchasing] = useState(false);
-
-  const commission = selectedPlan ? calculateCommission(selectedPlan.plan_amount) : 0;
-  const totalCharge = selectedPlan ? selectedPlan.plan_amount + commission : 0;
+  const [activeTab, setActiveTab] = useState<'hot' | 'daily' | 'weekly' | 'monthly'>('hot');
 
   const selectedNetworkData = NETWORKS.find((n) => n.id === selectedNetwork);
+  const categorizedPlans = useMemo(() => categorizePlans(dataPlans), [dataPlans]);
+  const displayPlans = categorizedPlans[activeTab];
+
+  // ──────────────────────────────────────────────
+  // Data Fetching
+  // ──────────────────────────────────────────────
 
   const loadData = async () => {
     if (!session?.user?.id) return;
@@ -129,36 +140,23 @@ export default function BuyData() {
     setSelectedPlan(null);
 
     try {
-      console.log('🔍 Loading plans for network:', networkId);
-
       const response = await fetch(`/api/get-data-plans?network=${networkId}`);
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch data plans');
-      }
+      if (!response.ok) throw new Error('Failed to load plans');
 
       const plans = await response.json();
-      console.log('✅ Loaded plans:', plans.length);
-
       setDataPlans(plans);
 
-      if (plans.length === 0) {
-        toast.info('No data plans available for this network');
-      }
-    } catch (error: any) {
-      console.error('❌ Error loading data plans:', error);
-      toast.error('Failed to load data plans: ' + error.message);
+      if (plans.length === 0) toast.info('No data plans available for this network');
+    } catch {
+      toast.error('Could not load data plans');
     } finally {
       setLoadingPlans(false);
     }
   };
 
   useEffect(() => {
-    if (sessionLoading) return;
-
-    if (!session) {
-      router.push('/auth');
+    if (sessionLoading || !session) {
+      if (!session) router.push('/auth');
       return;
     }
 
@@ -166,20 +164,16 @@ export default function BuyData() {
 
     const channel = supabase
       .channel('wallet_updates_data')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'wallets',
-          filter: `user_id=eq.${session.user.id}`,
-        },
-        (payload) => {
-          if (payload.new && 'balance' in payload.new) {
-            setWallet({ balance: payload.new.balance as number });
-          }
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'wallets',
+        filter: `user_id=eq.${session.user.id}`,
+      }, (payload) => {
+        if (payload.new?.balance !== undefined) {
+          setWallet({ balance: payload.new.balance as number });
         }
-      )
+      })
       .subscribe();
 
     return () => {
@@ -188,30 +182,19 @@ export default function BuyData() {
   }, [session, sessionLoading, router]);
 
   useEffect(() => {
-    if (selectedNetwork) {
-      loadDataPlans(selectedNetwork);
-    }
+    if (selectedNetwork) loadDataPlans(selectedNetwork);
   }, [selectedNetwork]);
 
+  // ──────────────────────────────────────────────
+  // Purchase Handler
+  // ──────────────────────────────────────────────
+
   const handlePurchase = async () => {
-    if (!phoneNumber || phoneNumber.length < 11) {
-      toast.error('Please enter a valid phone number');
-      return;
-    }
+    if (!phoneNumber || phoneNumber.length < 11) return toast.error('Enter a valid phone number');
+    if (!selectedPlan) return toast.error('Select a data plan');
 
-    if (!selectedNetwork) {
-      toast.error('Please select a network');
-      return;
-    }
-
-    if (!selectedPlan) {
-      toast.error('Please select a data plan');
-      return;
-    }
-
-    if (!wallet || wallet.balance < totalCharge) {
-      toast.error(`Insufficient balance. You need ₦${totalCharge.toLocaleString()}`);
-      return;
+    if (!wallet || wallet.balance < selectedPlan.plan_amount) {
+      return toast.error(`Insufficient balance. Need ₦${selectedPlan.plan_amount.toLocaleString()}`);
     }
 
     setIsPurchasing(true);
@@ -219,48 +202,33 @@ export default function BuyData() {
     try {
       const reference = `DATA_${Date.now()}`;
 
-      console.log('🚀 Purchasing data:', {
-        userId: session!.user.id,
-        phoneNumber,
-        network: selectedNetwork,
-        networkCode: selectedNetworkData?.networkCode,
-        planCode: selectedPlan.plan_code,
-        amount: selectedPlan.plan_amount,
-        reference,
-      });
-
       const response = await fetch('/api/purchase-data', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: session!.user.id,
-          phoneNumber: phoneNumber,
+          phoneNumber,
           network: selectedNetwork,
           networkCode: selectedNetworkData?.networkCode || selectedNetwork,
           planCode: selectedPlan.plan_code,
-          amount: selectedPlan.plan_amount,
-          reference: reference,
+          reference,
         }),
       });
 
       const data = await response.json();
-      console.log('API Response:', data);
 
       if (data.success) {
-        toast.success(`${selectedPlan.plan_name} sent successfully! 🎉`);
+        toast.success(`${selectedPlan.plan_name} delivered successfully!`);
         setPhoneNumber('');
         setSelectedNetwork(null);
         setSelectedPlan(null);
         setDataPlans([]);
         loadData();
       } else {
-        toast.error(data.message || 'Purchase failed. Please try again.');
+        toast.error(data.message || 'Purchase failed');
       }
-    } catch (err: any) {
-      console.error('Purchase error:', err);
-      toast.error('An error occurred. Please contact support.');
+    } catch {
+      toast.error('Something went wrong');
     } finally {
       setIsPurchasing(false);
     }
@@ -271,263 +239,266 @@ export default function BuyData() {
       <div className="min-h-screen bg-brand-carbon flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-12 h-12 animate-spin text-brand-mint mx-auto mb-4" />
-          <p className="text-brand-gray/70">Loading...</p>
+          <p className="text-brand-gray/70 text-sm">Loading your data options...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-brand-carbon text-white relative overflow-hidden">
-      {/* Decorative background */}
-      <div className="absolute top-0 right-0 w-96 h-96 bg-brand-mint/5 rounded-full blur-3xl" />
-      <div className="absolute bottom-0 left-0 w-96 h-96 bg-brand-primary/20 rounded-full blur-3xl" />
+    <div className="min-h-screen bg-brand-carbon text-white">
+      {/* Background glows */}
+      <div className="fixed inset-0 pointer-events-none">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-brand-mint/5 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 left-0 w-96 h-96 bg-brand-primary/10 rounded-full blur-3xl" />
+      </div>
 
-      <div className="relative z-10 max-w-2xl mx-auto p-6 pb-20">
+      <div className="relative z-10 max-w-3xl mx-auto px-4 sm:px-6 py-8 pb-24">
         {/* Header */}
-        <div className="mb-8">
+        <header className="mb-10">
           <Link
             href="/dashboard"
-            className="inline-flex items-center gap-2 text-brand-gray/60 hover:text-brand-mint transition-colors mb-6 group"
+            className="inline-flex items-center gap-2 text-brand-gray/70 hover:text-brand-mint transition-colors mb-6 group text-sm font-medium"
           >
-            <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-            <span>Back to Dashboard</span>
+            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+            Back to Dashboard
           </Link>
 
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-3 bg-gradient-to-br from-brand-mint to-brand-mint/80 rounded-2xl shadow-lg shadow-brand-mint/20">
-              <Wifi className="w-6 h-6 text-brand-carbon" />
+          <div className="flex items-center gap-4">
+            <div className="p-3.5 bg-gradient-to-br from-brand-mint to-emerald-500 rounded-2xl shadow-lg shadow-brand-mint/20">
+              <Wifi className="w-7 h-7 text-brand-carbon" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold">Buy Data</h1>
-              <p className="text-brand-gray/60 text-sm mt-1">Fast delivery • All networks</p>
+              <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">Buy Data Bundle</h1>
+              <p className="text-brand-gray/70 mt-1.5 text-base">Instant delivery • All networks supported</p>
             </div>
           </div>
-        </div>
+        </header>
 
-        {/* Wallet Balance */}
-        <div className="mb-8">
-          <div className="bg-gradient-to-br from-brand-mint to-brand-mint/80 rounded-3xl p-6 shadow-2xl shadow-brand-mint/20">
+        {/* Wallet Card */}
+        <div className="mb-10">
+          <div className="bg-gradient-to-br from-brand-mint to-emerald-500 rounded-3xl p-7 shadow-xl shadow-brand-mint/20">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-brand-carbon/20 backdrop-blur-sm rounded-xl">
-                  <Wallet className="w-5 h-5 text-brand-carbon" />
+                <div className="p-2.5 bg-white/20 backdrop-blur-sm rounded-xl">
+                  <Wallet className="w-6 h-6 text-white" />
                 </div>
-                <span className="text-brand-carbon/80 text-sm font-medium">Wallet Balance</span>
+                <span className="text-white/90 font-medium">Your Wallet Balance</span>
               </div>
-              <Sparkles className="w-5 h-5 text-brand-carbon/60 animate-pulse" />
+              <Sparkles className="w-5 h-5 text-white/80 animate-pulse" />
             </div>
-            <span className="text-4xl font-black text-brand-carbon">
-              ₦{wallet?.balance.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '0.00'}
-            </span>
+            <p className="text-4xl sm:text-5xl font-black text-white tracking-tight">
+              ₦{wallet?.balance?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '0.00'}
+            </p>
           </div>
         </div>
 
-        {/* Purchase Form */}
-        <div className="bg-brand-primary/30 backdrop-blur-xl rounded-3xl p-6 border border-brand-mint/10 shadow-2xl mb-8">
+        {/* Main Form Card */}
+        <div className="bg-brand-primary/40 backdrop-blur-xl rounded-3xl border border-brand-mint/15 shadow-2xl p-6 sm:p-8 mb-10">
           {/* Phone Number */}
-          <div className="mb-6">
+          <div className="mb-8">
             <label className="block text-sm font-semibold text-brand-gray/80 mb-3 flex items-center gap-2">
               <Signal className="w-4 h-4" />
-              Phone Number
+              Recipient Phone Number
             </label>
             <input
               type="tel"
               value={phoneNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
+              onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
               placeholder="0801 234 5678"
               maxLength={11}
-              className="w-full bg-brand-carbon/50 border-2 border-brand-mint/20 rounded-2xl px-5 py-4 text-white text-lg placeholder:text-brand-gray/40 focus:outline-none focus:border-brand-mint transition-all"
+              className="w-full bg-brand-carbon/60 border-2 border-brand-mint/20 rounded-2xl px-5 py-4 text-lg text-white placeholder:text-brand-gray/50 focus:outline-none focus:border-brand-mint focus:ring-2 focus:ring-brand-mint/30 transition-all"
             />
           </div>
 
           {/* Network Selection */}
-          <div className="mb-6">
+          <div className="mb-8">
             <label className="block text-sm font-semibold text-brand-gray/80 mb-3 flex items-center gap-2">
               <Package className="w-4 h-4" />
-              Select Network
+              Choose Network
             </label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {NETWORKS.map((network) => (
                 <button
                   key={network.id}
                   onClick={() => setSelectedNetwork(network.id)}
-                  className={`relative p-4 rounded-2xl border-2 transition-all ${
+                  className={`relative flex flex-col items-center p-4 rounded-2xl border-2 transition-all duration-300 ${
                     selectedNetwork === network.id
-                      ? 'border-brand-mint bg-brand-mint/10 scale-105 shadow-lg shadow-brand-mint/20'
-                      : 'border-brand-mint/20 bg-brand-carbon/30 hover:border-brand-mint/40 hover:scale-105'
+                      ? 'border-brand-mint bg-brand-mint/15 shadow-lg shadow-brand-mint/20 scale-[1.03]'
+                      : 'border-brand-mint/20 hover:border-brand-mint/40 bg-brand-carbon/40 hover:bg-brand-carbon/60'
                   }`}
                 >
-                  <div className="mb-2">{network.darkIcon}</div>
-                  <p
-                    className={`text-sm font-bold ${
-                      selectedNetwork === network.id ? 'text-brand-mint' : 'text-brand-gray/60'
-                    }`}
-                  >
+                  <div className="text-4xl mb-2">{network.icon}</div>
+                  <span className={`font-semibold text-sm ${selectedNetwork === network.id ? 'text-brand-mint' : 'text-white/90'}`}>
                     {network.name}
-                  </p>
+                  </span>
                   {selectedNetwork === network.id && (
-                    <div className="absolute -top-1 -right-1">
-                      <CheckCircle2 className="w-5 h-5 text-brand-mint fill-brand-mint" />
-                    </div>
+                    <CheckCircle2 className="absolute -top-2 -right-2 w-6 h-6 text-brand-mint fill-brand-mint" />
                   )}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Data Plans */}
+          {/* Plan Tabs & Grid */}
           {selectedNetwork && (
-            <div className="mb-6">
-              <label className="block text-sm font-semibold text-brand-gray/80 mb-3">Select Data Plan</label>
+            <div className="mb-8">
+              <h3 className="text-lg font-semibold text-white mb-4">Available Data Plans</h3>
 
               {loadingPlans ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="w-8 h-8 animate-spin text-brand-mint" />
+                <div className="flex flex-col items-center justify-center py-16">
+                  <Loader2 className="w-10 h-10 animate-spin text-brand-mint mb-4" />
+                  <p className="text-brand-gray/70">Loading plans...</p>
                 </div>
               ) : dataPlans.length === 0 ? (
-                <div className="text-center py-12 text-brand-gray/60">No data plans available</div>
-              ) : (
-                <div className="grid grid-cols-1 gap-3 max-h-96 overflow-y-auto pr-2">
-                  {dataPlans.map((plan) => (
-                    <button
-                      key={plan.plan_code}
-                      onClick={() => setSelectedPlan(plan)}
-                      className={`p-4 rounded-2xl border-2 transition-all text-left ${
-                        selectedPlan?.plan_code === plan.plan_code
-                          ? 'border-brand-mint bg-brand-mint/10 shadow-lg'
-                          : 'border-brand-mint/20 bg-brand-carbon/30 hover:border-brand-mint/40'
-                      }`}
-                    >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="font-bold text-white">{plan.plan_name}</p>
-                          <p className="text-sm text-brand-gray/60 mt-1">{plan.plan_duration}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-black text-brand-mint text-lg">
-                            ₦{plan.plan_amount.toLocaleString()}
-                          </p>
-                          {selectedPlan?.plan_code === plan.plan_code && (
-                            <CheckCircle2 className="w-5 h-5 text-brand-mint fill-brand-mint mt-1" />
-                          )}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
+                <div className="text-center py-16 text-brand-gray/70 bg-brand-carbon/40 rounded-2xl border border-brand-mint/10">
+                  No plans available for this network
                 </div>
+              ) : (
+                <>
+                  {/* Tabs */}
+                  <div className="flex flex-wrap gap-2 mb-6 border-b border-brand-mint/10 pb-2">
+                    {[
+                      { id: 'hot', label: 'Hot Deals', icon: Flame },
+                      { id: 'daily', label: 'Daily', icon: Sun },
+                      { id: 'weekly', label: 'Weekly', icon: CalendarDays },
+                      { id: 'monthly', label: 'Monthly', icon: Calendar },
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id as any)}
+                        className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium transition-all ${
+                          activeTab === tab.id
+                            ? 'bg-brand-mint text-brand-carbon shadow-md'
+                            : 'bg-brand-carbon/50 text-brand-gray/80 hover:bg-brand-carbon/70'
+                        }`}
+                      >
+                        <tab.icon className="w-4 h-4" />
+                        {tab.label} ({categorizedPlans[tab.id as keyof typeof categorizedPlans].length})
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Plans Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[500px] overflow-y-auto pr-2">
+                    {displayPlans.map((plan) => {
+                      const { dataSize, duration, planType } = parsePlanName(plan.plan_name);
+                      const isSelected = selectedPlan?.plan_code === plan.plan_code;
+
+                      return (
+                        <button
+                          key={plan.plan_code}
+                          onClick={() => setSelectedPlan(plan)}
+                          className={`p-5 rounded-2xl border transition-all duration-300 text-left ${
+                            isSelected
+                              ? 'border-brand-mint bg-brand-mint/10 shadow-lg shadow-brand-mint/20 scale-[1.02]'
+                              : 'border-brand-mint/15 bg-brand-carbon/40 hover:border-brand-mint/40 hover:bg-brand-carbon/60'
+                          }`}
+                        >
+                          <div className="flex justify-between items-start gap-4">
+                            <div>
+                              <div className="text-2xl font-black text-white mb-1">{dataSize || 'N/A'}</div>
+                              <div className="text-sm text-brand-gray/80 mb-2">{duration || 'N/A'}</div>
+                              {planType && (
+                                <span className="inline-block px-3 py-1 bg-brand-mint/20 border border-brand-mint/30 rounded-full text-xs font-semibold text-brand-mint uppercase">
+                                  {planType}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-right">
+                              <div className={`text-xl font-black ${isSelected ? 'text-brand-mint' : 'text-white'}`}>
+                                ₦{plan.plan_amount.toLocaleString()}
+                              </div>
+                              {isSelected && <CheckCircle2 className="w-6 h-6 text-brand-mint fill-brand-mint mt-2 ml-auto" />}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
           )}
 
-          {/* Price Breakdown */}
+          {/* Buy Button */}
           {selectedPlan && (
-            <div className="mb-6 p-5 bg-brand-carbon/50 rounded-2xl border border-brand-mint/20">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="p-1.5 bg-brand-mint/10 rounded-lg">
-                  <Info className="w-4 h-4 text-brand-mint" />
-                </div>
-                <p className="text-sm font-bold text-brand-mint">Price Breakdown</p>
-              </div>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-brand-gray/60 text-sm">Data Plan</span>
-                  <span className="font-bold text-white text-lg">
-                    ₦{selectedPlan.plan_amount.toLocaleString()}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-brand-gray/60 text-sm">Service Fee (2%)</span>
-                  <span className="font-semibold text-brand-gray">₦{commission.toLocaleString()}</span>
-                </div>
-                <div className="pt-3 border-t border-brand-mint/20 flex justify-between items-center">
-                  <span className="text-brand-mint font-bold">Total</span>
-                  <span className="text-brand-mint font-black text-2xl">
-                    ₦{totalCharge.toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            </div>
+            <button
+              onClick={handlePurchase}
+              disabled={isPurchasing || !phoneNumber || phoneNumber.length < 11}
+              className="w-full bg-gradient-to-r from-brand-mint to-emerald-500 text-brand-carbon font-bold text-lg py-5 rounded-2xl shadow-lg hover:shadow-xl hover:shadow-brand-mint/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 group"
+            >
+              {isPurchasing ? (
+                <>
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <Zap className="w-6 h-6 group-hover:animate-pulse" />
+                  Purchase ₦{selectedPlan.plan_amount.toLocaleString()}
+                  <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                </>
+              )}
+            </button>
           )}
-
-          {/* Purchase Button */}
-          <button
-            onClick={handlePurchase}
-            disabled={isPurchasing || !phoneNumber || !selectedNetwork || !selectedPlan}
-            className="w-full bg-gradient-to-r from-brand-mint to-brand-mint/80 text-brand-carbon font-black text-lg py-5 rounded-2xl hover:shadow-2xl hover:shadow-brand-mint/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 group hover:scale-[1.02] active:scale-[0.98]"
-          >
-            {isPurchasing ? (
-              <>
-                <Loader2 className="w-6 h-6 animate-spin" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <Zap className="w-6 h-6 group-hover:animate-pulse" />
-                Purchase for ₦{totalCharge.toLocaleString()}
-                <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </>
-            )}
-          </button>
         </div>
 
         {/* Recent Transactions */}
-        <div>
-          <div className="flex items-center gap-3 mb-5">
-            <div className="p-2 bg-brand-primary/30 rounded-xl">
+        <section>
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2.5 bg-brand-mint/10 rounded-xl">
               <Clock className="w-5 h-5 text-brand-mint" />
             </div>
-            <h3 className="text-xl font-bold">Recent Purchases</h3>
+            <h3 className="text-2xl font-bold">Recent Purchases</h3>
           </div>
 
           {transactions.length === 0 ? (
-            <div className="bg-brand-primary/20 border-2 border-dashed border-brand-mint/20 rounded-2xl p-12 text-center">
-              <div className="w-20 h-20 bg-brand-carbon/50 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Wifi className="w-10 h-10 text-brand-mint/50" />
-              </div>
-              <p className="text-brand-gray font-medium">No purchase history yet</p>
-              <p className="text-brand-gray/60 text-sm mt-1">Your transactions will appear here</p>
+            <div className="bg-brand-primary/30 border border-brand-mint/15 rounded-2xl p-12 text-center">
+              <Wifi className="w-14 h-14 text-brand-mint/40 mx-auto mb-4" />
+              <p className="text-brand-gray/80 text-lg font-medium">No purchases yet</p>
+              <p className="text-brand-gray/60 mt-2">Your data transactions will appear here</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {transactions.map((tx) => {
                 const txNetwork = NETWORKS.find((n) => n.id === tx.network);
                 return (
                   <div
                     key={tx.id}
-                    className="bg-brand-primary/30 backdrop-blur-xl border border-brand-mint/10 rounded-2xl p-5 hover:border-brand-mint/30 transition-all"
+                    className="bg-brand-primary/40 backdrop-blur-sm border border-brand-mint/15 rounded-2xl p-5 hover:border-brand-mint/30 transition-all"
                   >
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="flex items-center gap-3">
-                        <div>{txNetwork?.darkIcon || '📶'}</div>
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="text-4xl opacity-90">{txNetwork?.icon || '📶'}</div>
                         <div>
-                          <p className="font-bold text-white text-lg">₦{tx.amount.toLocaleString()}</p>
-                          <p className="text-sm text-brand-gray/60 font-mono">{tx.phone_number}</p>
-                          <p className="text-xs text-brand-gray/50 mt-1">{tx.plan_code}</p>
+                          <p className="font-bold text-lg text-white">₦{tx.amount.toLocaleString()}</p>
+                          <p className="text-sm text-brand-gray/70 font-mono mt-0.5">{tx.phone_number}</p>
                         </div>
                       </div>
                       <span
-                        className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase ${
-                          tx.status === 'completed' || tx.status === 'success'
-                            ? 'bg-green-500/20 text-green-400 border border-green-500/30'
-                            : tx.status === 'pending'
-                            ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
-                            : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                        className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide ${
+                          tx.status === 'success' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                          tx.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                          'bg-red-500/20 text-red-400 border border-red-500/30'
                         }`}
                       >
                         {tx.status}
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-brand-gray/50">
-                      <Clock className="w-3 h-3" />
-                      {new Date(tx.created_at).toLocaleString()}
+                    <div className="mt-3 text-xs text-brand-gray/60 flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5" />
+                      {new Date(tx.created_at).toLocaleString('en-GB', {
+                        dateStyle: 'medium',
+                        timeStyle: 'short',
+                      })}
                     </div>
                   </div>
                 );
               })}
             </div>
           )}
-        </div>
+        </section>
       </div>
     </div>
   );
