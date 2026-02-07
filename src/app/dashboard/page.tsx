@@ -177,7 +177,7 @@ export default function VtuDashboard() {
 
                             {servicesOpen && (
                                 <div className="ml-12 mt-2 space-y-2 border-l border-white/5 pl-4">
-                                    <SubNavItem label="Buy Data" href="/dashboard/data" />
+                                    <SubNavItem label="Buy Data" href="/dashboard/services/buy-data" />
                                     <SubNavItem label="Airtime Topup" href="/dashboard/services/airtime" />
                                     <SubNavItem label="Electricity" href="/dashboard/electricity" />
                                     <SubNavItem label="Cable TV" href="/dashboard/cable" />
@@ -289,7 +289,7 @@ export default function VtuDashboard() {
                             <h3 className="font-bold uppercase text-[10px] tracking-widest text-brand-gray/50">Quick Services</h3>
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                            <ServiceBox icon={<Zap className="text-brand-mint" size={32} />} label="Buy Data" href="/dashboard/data" />
+                            <ServiceBox icon={<Zap className="text-brand-mint" size={32} />} label="Buy Data" href="/dashboard/services/buy-data" />
                             <ServiceBox icon={<Smartphone className="text-blue-400" size={32} />} label="Airtime" href="/dashboard/services/airtime" />
                             <ServiceBox icon={<Tv className="text-purple-400" size={32} />} label="Cable TV" href="/dashboard/cable" />
                             <ServiceBox icon={<Lightbulb className="text-yellow-400" size={32} />} label="Electricity" href="/dashboard/electricity" />

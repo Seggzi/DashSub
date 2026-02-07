@@ -12,17 +12,16 @@ const supabase = createClient(
   }
 );
 
-const PROVIDER = process.env.AIRTIME_PROVIDER || 'clubkonnect';
 const COMMISSION_RATE = 0.02;
 
 function calculateCommission(amount: number): number {
   return Math.ceil(amount * COMMISSION_RATE);
 }
 
-async function purchaseAirtimeWithClubkonnect(
-  network: string,
+async function purchaseDataWithClubkonnect(
+  networkCode: string,
   phoneNumber: string,
-  amount: number,
+  planCode: string,
   reference: string
 ) {
   const CLUBKONNECT_USER_ID = process.env.CLUBKONNECT_USER_ID;
@@ -30,35 +29,26 @@ async function purchaseAirtimeWithClubkonnect(
   const CLUBKONNECT_BASE_URL = process.env.CLUBKONNECT_BASE_URL || 'https://www.nellobytesystems.com';
   
   if (!CLUBKONNECT_USER_ID || !CLUBKONNECT_API_KEY) {
-    console.error('❌ Clubkonnect credentials not found');
+    console.error('❌ Clubkonnect credentials not configured');
     throw new Error('Clubkonnect API credentials not configured');
   }
 
-  // Clubkonnect network codes
-  const networkMap: { [key: string]: string } = {
-    mtn: '01',      // MTN @ 3% discount
-    glo: '02',      // GLO @ 8% discount
-    airtel: '04',   // Airtel @ 3% discount
-    '9mobile': '03' // 9mobile @ 7% discount
-  };
-
-  console.log('🚀 Calling Clubkonnect Airtime API...');
-  console.log('Network:', network, '→', networkMap[network]);
+  console.log('🚀 Calling Clubkonnect Data API...');
+  console.log('Network Code:', networkCode);
   console.log('Phone:', phoneNumber);
-  console.log('Amount:', amount);
+  console.log('Plan Code:', planCode);
   console.log('Reference:', reference);
 
   try {
-    // Clubkonnect uses GET request with query parameters
-    const url = new URL(`${CLUBKONNECT_BASE_URL}/APIAirtimeV1.asp`);
+    const url = new URL(`${CLUBKONNECT_BASE_URL}/APIDatabundleV1.asp`);
     url.searchParams.append('UserID', CLUBKONNECT_USER_ID);
     url.searchParams.append('APIKey', CLUBKONNECT_API_KEY);
-    url.searchParams.append('MobileNetwork', networkMap[network]);
-    url.searchParams.append('Amount', amount.toString());
+    url.searchParams.append('MobileNetwork', networkCode);
+    url.searchParams.append('DataPlan', planCode);
     url.searchParams.append('MobileNumber', phoneNumber);
     url.searchParams.append('RequestID', reference);
 
-    console.log('📡 Request URL:', url.toString());
+    console.log('📡 Request URL:', url.toString().replace(CLUBKONNECT_API_KEY, '***'));
 
     const response = await fetch(url.toString(), {
       method: 'GET',
@@ -73,21 +63,21 @@ async function purchaseAirtimeWithClubkonnect(
     try {
       data = JSON.parse(responseText);
     } catch (e) {
-      console.error('❌ Failed to parse response as JSON:', e);
+      console.error('❌ Failed to parse response:', e);
       return {
         success: false,
-        message: `Invalid response from Clubkonnect: ${responseText.substring(0, 100)}`,
+        message: `Invalid response: ${responseText.substring(0, 100)}`,
         provider_response: { raw: responseText },
       };
     }
 
     console.log('📡 Parsed response:', JSON.stringify(data, null, 2));
 
-    // Check for errors
+    // Error handling
     if (data.status === 'INVALID_CREDENTIALS' || data.status === 'MISSING_CREDENTIALS') {
       return {
         success: false,
-        message: 'Invalid API credentials',
+        message: 'Invalid API credentials. Contact support.',
         provider_response: data,
       };
     }
@@ -95,78 +85,42 @@ async function purchaseAirtimeWithClubkonnect(
     if (data.status === 'INSUFFICIENT_BALANCE') {
       return {
         success: false,
-        message: 'Insufficient balance in provider account. Please fund your Clubkonnect account.',
+        message: 'Service temporarily unavailable. Please try again later.',
         provider_response: data,
       };
     }
 
-    // Clubkonnect success indicators
-    const isSuccess = data.status === 'ORDER_RECEIVED' || 
-                     data.statuscode === '100' ||
-                     data.status === 'ORDER_COMPLETED' ||
-                     data.statuscode === '200';
+    if (data.status === 'INVALID_DATAPLAN') {
+      return {
+        success: false,
+        message: 'Invalid data plan. Please select a different plan.',
+        provider_response: data,
+      };
+    }
+
+    if (data.status === 'INVALID_RECIPIENT') {
+      return {
+        success: false,
+        message: 'Invalid phone number format.',
+        provider_response: data,
+      };
+    }
+
+    // Success indicators
+    const isSuccess = 
+      data.status === 'ORDER_RECEIVED' || 
+      data.statuscode === '100' ||
+      data.status === 'ORDER_COMPLETED' ||
+      data.statuscode === '200';
 
     return {
       success: isSuccess,
-      message: data.status || 'Airtime purchase initiated',
+      message: isSuccess ? 'Data purchase successful' : (data.status || 'Purchase failed'),
       provider_reference: data.orderid || reference,
       provider_response: data,
     };
   } catch (error: any) {
-    console.error('❌ Clubkonnect fetch error:', error);
-    return {
-      success: false,
-      message: `Network error: ${error.message}`,
-      provider_response: { error: error.message },
-    };
-  }
-}
-
-async function purchaseAirtimeWithPeyflex(
-  network: string,
-  phoneNumber: string,
-  amount: number
-) {
-  const PEYFLEX_API_KEY = process.env.PEYFLEX_API_KEY;
-  
-  if (!PEYFLEX_API_KEY) {
-    throw new Error('Peyflex API key not configured');
-  }
-
-  const payload = {
-    network: network,
-    amount: amount,
-    mobile_number: phoneNumber,
-  };
-
-  try {
-    const response = await fetch('https://client.peyflex.com.ng/api/airtime/topup/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Token ${PEYFLEX_API_KEY}`,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const responseText = await response.text();
-    let data = JSON.parse(responseText);
-
-    if (!response.ok) {
-      return {
-        success: false,
-        message: data.message || `Peyflex error: ${response.status}`,
-        provider_response: data,
-      };
-    }
-
-    return {
-      success: data.status === 'success' || data.success === true,
-      message: data.message || 'Airtime purchase completed',
-      provider_reference: data.reference || data.transaction_id,
-      provider_response: data,
-    };
-  } catch (error: any) {
+    console.error('❌ Clubkonnect error:', error);
     return {
       success: false,
       message: `Network error: ${error.message}`,
@@ -176,17 +130,27 @@ async function purchaseAirtimeWithPeyflex(
 }
 
 export async function POST(request: NextRequest) {
-  console.log('\n🔔 New airtime purchase request');
+  console.log('\n🔔 New data purchase request');
   
   try {
     const body = await request.json();
-    const { userId, phoneNumber, amount, network, reference } = body;
+    const { userId, phoneNumber, planCode, network, networkCode, amount, reference } = body;
 
-    console.log('📥 Request data:', { userId, phoneNumber, amount, network, reference });
+    console.log('📥 Request:', { userId, phoneNumber, planCode, network, networkCode, amount, reference });
 
-    if (!userId || !phoneNumber || !amount || !network || !reference) {
+    // Validation
+    if (!userId || !phoneNumber || !planCode || !amount || !reference || !networkCode) {
       return NextResponse.json(
         { success: false, message: 'Missing required fields' },
+        { status: 400 }
+      );
+    }
+
+    // Validate phone number
+    const cleanedPhone = phoneNumber.replace(/\D/g, '');
+    if (cleanedPhone.length !== 11 || !cleanedPhone.startsWith('0')) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid phone number format' },
         { status: 400 }
       );
     }
@@ -194,8 +158,9 @@ export async function POST(request: NextRequest) {
     const commission = calculateCommission(amount);
     const totalCharge = amount + commission;
 
-    console.log(`💰 Breakdown - Airtime: ₦${amount}, Commission: ₦${commission}, Total: ₦${totalCharge}`);
+    console.log(`💰 Data: ₦${amount}, Fee: ₦${commission}, Total: ₦${totalCharge}`);
 
+    // Get wallet
     const { data: wallet, error: walletError } = await supabase
       .from('wallets')
       .select('balance')
@@ -203,53 +168,59 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (walletError || !wallet) {
+      console.error('❌ Wallet error:', walletError);
       return NextResponse.json(
         { success: false, message: 'Failed to fetch wallet' },
         { status: 500 }
       );
     }
 
+    console.log('💵 Current balance:', wallet.balance);
+
+    // Check balance
     if (wallet.balance < totalCharge) {
       return NextResponse.json(
         {
           success: false,
-          message: `Insufficient balance. You need ₦${totalCharge} (₦${amount} + ₦${commission} fee)`
+          message: `Insufficient balance. You need ₦${totalCharge.toLocaleString()} (₦${amount.toLocaleString()} + ₦${commission.toLocaleString()} fee)`
         },
         { status: 400 }
       );
     }
 
+    // Create transaction
     const { data: transaction, error: txError } = await supabase
       .from('transactions')
       .insert({
         user_id: userId,
         amount: totalCharge,
-        type: 'airtime',
+        type: 'data',
         status: 'pending',
         reference: reference,
         phone_number: phoneNumber,
         network: network,
+        plan_code: planCode,
       })
       .select()
       .single();
 
     if (txError) {
+      console.error('❌ Transaction error:', txError);
       return NextResponse.json(
         { success: false, message: 'Failed to create transaction' },
         { status: 500 }
       );
     }
 
-    console.log(`🚀 Calling ${PROVIDER} API...`);
-    
+    console.log('✅ Transaction created');
+
+    // Purchase data
     let providerResult;
     try {
-      if (PROVIDER === 'clubkonnect') {
-        providerResult = await purchaseAirtimeWithClubkonnect(network, phoneNumber, amount, reference);
-      } else {
-        providerResult = await purchaseAirtimeWithPeyflex(network, phoneNumber, amount);
-      }
+      providerResult = await purchaseDataWithClubkonnect(networkCode, phoneNumber, planCode, reference);
     } catch (error: any) {
+      console.error('❌ Provider error:', error);
+      
       await supabase
         .from('transactions')
         .update({ status: 'failed' })
@@ -264,23 +235,32 @@ export async function POST(request: NextRequest) {
     console.log('📡 Provider result:', providerResult);
 
     if (providerResult.success) {
+      console.log('💸 Deducting from wallet...');
+
+      // Deduct from wallet
+      const newBalance = wallet.balance - totalCharge;
       const { error: deductError } = await supabase
         .from('wallets')
-        .update({ balance: wallet.balance - totalCharge })
+        .update({ balance: newBalance })
         .eq('user_id', userId);
 
       if (deductError) {
+        console.error('❌ Deduction error:', deductError);
+        
         await supabase
           .from('transactions')
           .update({ status: 'failed' })
           .eq('id', transaction.id);
 
         return NextResponse.json(
-          { success: false, message: 'Failed to deduct from wallet' },
+          { success: false, message: 'Failed to deduct from wallet. Contact support.' },
           { status: 500 }
         );
       }
 
+      console.log('✅ Wallet deducted. New balance:', newBalance);
+
+      // Update transaction
       await supabase
         .from('transactions')
         .update({
@@ -289,16 +269,20 @@ export async function POST(request: NextRequest) {
         })
         .eq('id', transaction.id);
 
+      console.log('🎉 Data purchase completed!');
+
       return NextResponse.json({
         success: true,
         message: providerResult.message,
-        new_balance: wallet.balance - totalCharge,
+        new_balance: newBalance,
         transaction_id: transaction.id,
-        airtime_amount: amount,
+        data_amount: amount,
         commission: commission,
         total_charged: totalCharge,
       });
     } else {
+      console.error('❌ Provider failed:', providerResult.message);
+      
       await supabase
         .from('transactions')
         .update({ status: 'failed' })
