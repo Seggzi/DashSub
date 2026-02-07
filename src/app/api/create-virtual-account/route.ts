@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
-import { paystackService } from '@/lib/paystack';
+import { monnifyService } from '@/lib/monnify';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,7 +14,7 @@ const supabase = createClient(
 );
 
 export async function POST(request: NextRequest) {
-  console.log('\n🏦 Virtual account creation request');
+  console.log('\n🏦 Virtual account creation request (Monnify)');
   
   try {
     const { userId } = await request.json();
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if user already has a virtual account
+    // Check if already has virtual account
     if (profile.virtual_account_number) {
       return NextResponse.json({
         success: true,
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Get user email from auth
+    // Get user email
     const { data: authUser } = await supabase.auth.admin.getUserById(userId);
     
     if (!authUser?.user?.email) {
@@ -63,55 +63,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse full name
-    const nameParts = (profile.full_name || '').split(' ');
-    const firstName = nameParts[0] || 'User';
-    const lastName = nameParts.slice(1).join(' ') || 'DashSub';
+    const fullName = profile.full_name || 'DashSub User';
 
-    console.log('👤 Creating account for:', authUser.user.email);
+    console.log('👤 Creating Monnify account for:', authUser.user.email);
 
-    // Create or get Paystack customer
-    const customer = await paystackService.createOrGetCustomer(
-      authUser.user.email,
-      firstName,
-      lastName,
-      profile.phone_number || '08000000000'
-    );
-
-    // Create dedicated virtual account
-    const virtualAccount = await paystackService.createDedicatedAccount({
-      email: authUser.user.email,
-      first_name: firstName,
-      last_name: lastName,
-      phone: profile.phone_number || '08000000000',
-      preferred_bank: 'wema-bank',
+    // Create Monnify reserved account
+    const reservedAccount = await monnifyService.createReservedAccount({
+      accountReference: userId, // Use user ID as unique reference
+      accountName: fullName,
+      customerEmail: authUser.user.email,
+      customerName: fullName,
     });
 
     // Save to database
     const { error: updateError } = await supabase
       .from('profiles')
       .update({
-        virtual_account_number: virtualAccount.account_number,
-        virtual_account_bank: virtualAccount.bank.name,
-        virtual_account_name: virtualAccount.account_name,
-        paystack_customer_code: customer.customer_code,
+        virtual_account_number: reservedAccount.accountNumber,
+        virtual_account_bank: reservedAccount.bankName,
+        virtual_account_name: reservedAccount.accountName,
       })
       .eq('id', userId);
 
     if (updateError) {
-      console.error('❌ Failed to save virtual account:', updateError);
+      console.error('❌ Failed to save:', updateError);
       throw updateError;
     }
 
-    console.log('✅ Virtual account created successfully');
+    console.log('✅ Monnify virtual account created!');
 
     return NextResponse.json({
       success: true,
       message: 'Virtual account created successfully',
       virtualAccount: {
-        account_number: virtualAccount.account_number,
-        account_name: virtualAccount.account_name,
-        bank_name: virtualAccount.bank.name,
+        account_number: reservedAccount.accountNumber,
+        account_name: reservedAccount.accountName,
+        bank_name: reservedAccount.bankName,
       },
     });
   } catch (error: any) {

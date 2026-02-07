@@ -331,43 +331,8 @@ export default function FundWallet() {
           </div>
         ) : (
           <div className="bg-brand-gray/10 rounded-xl p-6">
-            <h3 className="text-lg font-semibold mb-4">Bank Transfer Details</h3>
+            <h3 className="text-lg font-semibold mb-4">Coming Soon</h3>
 
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm text-brand-gray mb-1">Bank Name</p>
-                <p className="font-semibold">{virtualAccount.bank}</p>
-              </div>
-
-              <div>
-                <p className="text-sm text-brand-gray mb-1">Account Number</p>
-                <div className="flex items-center gap-2">
-                  <p className="font-semibold text-xl">{virtualAccount.accNo}</p>
-                  <button
-                    onClick={copyToClipboard}
-                    className="p-2 hover:bg-brand-gray/20 rounded-lg transition-colors"
-                  >
-                    {copied ? (
-                      <Check className="w-4 h-4 text-brand-mint" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm text-brand-gray mb-1">Account Name</p>
-                <p className="font-semibold">{virtualAccount.name}</p>
-              </div>
-
-              <div className="bg-brand-mint/10 border border-brand-mint/30 rounded-lg p-4 mt-4">
-                <p className="text-sm text-brand-mint">
-                  <ShieldCheck className="w-4 h-4 inline mr-1" />
-                  Transfers are usually credited within 5 minutes
-                </p>
-              </div>
-            </div>
           </div>
         )}
       </div>
