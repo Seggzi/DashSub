@@ -50,15 +50,11 @@ export default function FundWallet() {
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'card' | 'transfer'>('card');
+  const [activeTab, setActiveTab] = useState<'card' | 'transfer'>('transfer');
   const [copied, setCopied] = useState(false);
   const [paystackLoaded, setPaystackLoaded] = useState(false);
-
-  const virtualAccount = {
-    bank: "Wema Bank",
-    accNo: "0123456789",
-    name: "DASH SUB - " + (session?.user?.email?.split('@')[0] || 'User')
-  };
+  const [profile, setProfile] = useState<any>(null);
+  const [creatingAccount, setCreatingAccount] = useState(false);
 
   // Load Paystack script manually
   useEffect(() => {
@@ -78,13 +74,21 @@ export default function FundWallet() {
   const loadData = async () => {
     if (!session?.user?.id) return;
 
+    // Load profile
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .single();
+
+    if (profileData) setProfile(profileData);
+
     const { data: walletData } = await supabase
       .from('wallets')
       .select('balance')
       .eq('user_id', session.user.id)
       .single();
 
-    console.log('Wallet Data:', walletData);
     if (walletData) setWallet(walletData);
 
     const { data: transData } = await supabase
@@ -95,7 +99,6 @@ export default function FundWallet() {
       .order('created_at', { ascending: false })
       .limit(5);
 
-    console.log('Transactions Data:', transData);
     if (transData) setTransactions(transData);
     setLoading(false);
   };
@@ -126,10 +129,29 @@ export default function FundWallet() {
     };
   }, [session, sessionLoading, router]);
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(virtualAccount.accNo);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const createVirtualAccount = async () => {
+    setCreatingAccount(true);
+    
+    try {
+      const response = await fetch('/api/create-virtual-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: session!.user.id }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        toast.success('Virtual account created! 🎉');
+        loadData();
+      } else {
+        toast.error(data.message || 'Failed to create account');
+      }
+    } catch (error) {
+      toast.error('An error occurred');
+    } finally {
+      setCreatingAccount(false);
+    }
   };
 
   const handlePaystack = async () => {
@@ -171,21 +193,17 @@ export default function FundWallet() {
       currency: 'NGN',
       ref: reference,
       callback: function (response: any) {
-        // ✅ Check localStorage lock FIRST
         if (isPaymentLocked(reference)) {
           console.log('⚠️ Payment already locked, ignoring duplicate callback');
           return;
         }
 
-        // ✅ Lock IMMEDIATELY
         lockPayment(reference);
 
-        // Process the payment
         (async () => {
           try {
             console.log('💳 Paystack response:', response);
 
-            // ✅ ONLY update transaction status - trigger handles wallet update
             const { error: updateError } = await supabase
               .from('transactions')
               .update({ status: 'success' })
@@ -197,15 +215,12 @@ export default function FundWallet() {
               throw updateError;
             }
 
-            console.log('✅ Transaction updated to success - database trigger will add funds automatically');
-
-            // ❌ REMOVED: RPC call (the trigger does this now)
-            // The database trigger automatically adds money to wallet!
+            console.log('✅ Transaction updated to success');
             
             toast.success('Payment received! Your balance will update shortly.');
             setAmount('');
+            loadData();
 
-            // Clean up lock after 30 seconds
             setTimeout(() => unlockPayment(reference), 30000);
           } catch (err) {
             console.error('❌ Payment processing error:', err);
@@ -264,17 +279,6 @@ export default function FundWallet() {
       {/* Tabs */}
       <div className="max-w-md mx-auto bg-brand-gray/10 rounded-xl p-1 flex gap-1 mb-6">
         <button
-          onClick={() => setActiveTab('card')}
-          className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-            activeTab === 'card' 
-              ? 'bg-brand-mint text-brand-carbon shadow-lg' 
-              : 'text-brand-gray/40'
-          }`}
-        >
-          <Zap className="w-4 h-4 inline mr-1" />
-          Online Payment
-        </button>
-        <button
           onClick={() => setActiveTab('transfer')}
           className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
             activeTab === 'transfer' 
@@ -285,11 +289,89 @@ export default function FundWallet() {
           <Landmark className="w-4 h-4 inline mr-1" />
           Bank Transfer
         </button>
+        <button
+          onClick={() => setActiveTab('card')}
+          className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+            activeTab === 'card' 
+              ? 'bg-brand-mint text-brand-carbon shadow-lg' 
+              : 'text-brand-gray/40'
+          }`}
+        >
+          <Zap className="w-4 h-4 inline mr-1" />
+          Online Payment
+        </button>
       </div>
 
       {/* Content Area */}
       <div className="max-w-md mx-auto">
-        {activeTab === 'card' ? (
+        {activeTab === 'transfer' ? (
+          <div className="bg-brand-gray/10 rounded-xl p-6">
+            <h3 className="text-lg font-semibold mb-4">Bank Transfer Details</h3>
+
+            {profile?.monnify_accounts && Array.isArray(profile.monnify_accounts) && profile.monnify_accounts.length > 0 ? (
+              <div className="space-y-4">
+                {profile.monnify_accounts.map((account: any, index: number) => (
+                  <div key={index} className="bg-brand-carbon rounded-xl p-4 border border-brand-mint/20">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm font-bold text-brand-mint">{account.bankName}</p>
+                      <span className="text-xs bg-brand-mint/20 text-brand-mint px-2 py-1 rounded">Bank {index + 1}</span>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <div>
+                        <p className="text-xs text-brand-gray">Account Number</p>
+                        <div className="flex items-center justify-between">
+                          <p className="font-bold text-lg">{account.accountNumber}</p>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(account.accountNumber);
+                              setCopied(true);
+                              toast.success('Account number copied!');
+                              setTimeout(() => setCopied(false), 2000);
+                            }}
+                            className="p-2 hover:bg-brand-mint/20 rounded"
+                          >
+                            {copied ? <Check className="w-4 h-4 text-brand-mint" /> : <Copy className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <p className="text-xs text-brand-gray">Account Name</p>
+                        <p className="font-semibold text-sm">{account.accountName}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                
+                <div className="bg-brand-mint/10 border border-brand-mint/30 rounded-lg p-4 mt-4">
+                  <p className="text-sm text-brand-mint flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4" />
+                    Transfer to any account - instant credit!
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-brand-gray mb-4">No virtual account yet</p>
+                <button
+                  onClick={createVirtualAccount}
+                  disabled={creatingAccount}
+                  className="bg-brand-mint text-brand-carbon px-6 py-3 rounded-lg font-bold disabled:opacity-50 flex items-center justify-center gap-2 mx-auto"
+                >
+                  {creatingAccount ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    'Create Virtual Account'
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
           <div className="bg-brand-gray/10 rounded-xl p-6">
             <h3 className="text-lg font-semibold mb-4">Fund with Card</h3>
 
@@ -328,11 +410,6 @@ export default function FundWallet() {
                 </>
               )}
             </button>
-          </div>
-        ) : (
-          <div className="bg-brand-gray/10 rounded-xl p-6">
-            <h3 className="text-lg font-semibold mb-4">Coming Soon</h3>
-
           </div>
         )}
       </div>
