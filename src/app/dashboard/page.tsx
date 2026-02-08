@@ -270,7 +270,7 @@ export default function VtuDashboard() {
                         </div>
 
                         {/* Virtual Account */}
-                        {profile?.monnify_accounts && Array.isArray(profile.monnify_accounts) && profile.monnify_accounts.length > 0 ? (
+                        {profile && profile.monnify_accounts && Array.isArray(profile.monnify_accounts) && profile.monnify_accounts.length > 0 ? (
                             <div className="bg-brand-mint/5 border border-brand-mint/10 rounded-[2rem] p-6 flex flex-col justify-between">
                                 <div>
                                     <div className="flex justify-between items-center mb-4">
@@ -285,7 +285,7 @@ export default function VtuDashboard() {
                                     <div className="flex items-center justify-between">
                                         <p className="text-xl font-black tracking-tight">{profile.monnify_accounts[0].accountNumber}</p>
                                         <button 
-                                            onClick={() => copyToClipboard(profile.monnify_accounts[0].accountNumber)} 
+                                            onClick={() => copyToClipboard(profile.monnify_accounts?.[0]?.accountNumber || '')} 
                                             className="p-2 hover:bg-brand-mint/20 rounded-lg text-brand-mint transition relative"
                                         >
                                             {copied ? <Check size={16} /> : <Copy size={16} />}
