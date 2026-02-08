@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getMonnifyToken } from '@/lib/monnify';
+// import { getMonnifyToken } from '@/lib/monnify';
 import { supabase } from '@/lib/supabaseClient';
 
 export async function POST(req: NextRequest) {
@@ -64,4 +64,8 @@ export async function POST(req: NextRequest) {
     console.error('Monnify reserved account error:', err);
     return NextResponse.json({ success: false, message: 'Failed to create account' }, { status: 500 });
   }
+}
+
+function getMonnifyToken() {
+  throw new Error('Function not implemented.');
 }
