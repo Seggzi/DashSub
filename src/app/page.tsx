@@ -196,9 +196,9 @@ export default function Home() {
               </div>
             ))}
           </div>
-          <div className="mt-12 text-center">
+          {/* <div className="mt-12 text-center">
             <p className="text-[10px] text-gray-400 font-medium italic">* All plans are valid for 30 days.</p>
-          </div>
+          </div> */}
         </div>
       </section>
 
