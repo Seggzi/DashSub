@@ -24,9 +24,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-// ──────────────────────────────────────────────
-// Types
-// ──────────────────────────────────────────────
+
 interface Transaction {
   id: string;
   amount: number;
@@ -41,7 +39,7 @@ interface Transaction {
 
 const PAGE_SIZE = 20;
 
-// Network-specific styling (colored border + text)
+
 const NETWORK_STYLES: { [key: string]: { border: string; text: string; bg: string } } = {
   mtn: {
     border: 'border-yellow-500/40',

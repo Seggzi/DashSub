@@ -173,9 +173,9 @@ export default function Home() {
 
           <div className="grid lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
             {[
-              { net: 'MTN', color: '#FACC15', rates: [['1GB', '275'], ['2GB', '550'], ['5GB', '1,375']] },
-              { net: 'GLO', color: '#22C55E', rates: [['1GB', '265'], ['2GB', '530'], ['5GB', '1,325']] },
-              { net: 'AIRTEL', color: '#EF4444', rates: [['1GB', '285'], ['2GB', '570'], ['5GB', '1,425']] },
+              { net: 'MTN', color: '#FACC15', rates: [['1GB', '575'], ['2GB', '1,305'], ['5GB', '2,921']] },
+              { net: 'GLO', color: '#22C55E', rates: [['1GB', '325'], ['2GB', '578'], ['5GB', '1,622']] },
+              { net: 'AIRTEL', color: '#EF4444', rates: [['1GB', '690'], ['2GB', '863'], ['5GB', '1,725']] },
             ].map((item) => (
               <div key={item.net} className="border border-gray-100 rounded-xl overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-50 bg-gray-50/30 flex justify-between items-center">
