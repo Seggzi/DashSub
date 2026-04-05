@@ -1,130 +1,186 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
-import { monnifyService } from '@/lib/monnify';
-
+import { createClient } from '@supabase/supabase-js';
+ 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
-
-export async function POST(request: NextRequest) {
-  console.log('\n🏦 Virtual account creation request (Monnify)');
-  
+ 
+const PAYVESSEL_BASE = process.env.PAYVESSEL_BASE_URL ?? 'https://api.payvessel.com';
+ 
+export async function POST(req: NextRequest) {
   try {
-    const { userId } = await request.json();
-
+    const { userId } = await req.json();
+ 
     if (!userId) {
       return NextResponse.json(
-        { success: false, message: 'User ID is required' },
+        { success: false, message: 'userId is required' },
         { status: 400 }
       );
     }
-
-    // Get user profile
-    const { data: profile, error: profileError } = await supabase
+ 
+    // ── 1. Load user profile ─────────────────────────────────────────
+    const { data: profile, error: profileErr } = await supabase
       .from('profiles')
-      .select('*')
+      .select('id, full_name, email, monnify_accounts, payvessel_customer_id')
       .eq('id', userId)
       .single();
-
-    if (profileError || !profile) {
-      console.error('❌ Profile not found:', profileError);
+ 
+    if (profileErr || !profile) {
       return NextResponse.json(
-        { success: false, message: 'Profile not found' },
+        { success: false, message: 'User not found' },
         { status: 404 }
       );
     }
-
-    // Check if user already has virtual accounts
-    if (profile.monnify_account_reference) {
-      console.log('ℹ️ User already has virtual accounts, fetching latest...');
-      
-      try {
-        const accountDetails = await monnifyService.getReservedAccountDetails(
-          profile.monnify_account_reference
+ 
+    // ── 2. Already has accounts? Return them — one account per user ──
+    if (
+      profile.monnify_accounts &&
+      Array.isArray(profile.monnify_accounts) &&
+      profile.monnify_accounts.length > 0
+    ) {
+      return NextResponse.json({
+        success: true,
+        message:  'Virtual account already exists',
+        accounts: profile.monnify_accounts,
+      });
+    }
+ 
+    // ── 3. Resolve email ─────────────────────────────────────────────
+    let userEmail = profile.email;
+    if (!userEmail) {
+      const { data: authUser } = await supabase.auth.admin.getUserById(userId);
+      userEmail = authUser?.user?.email ?? `user_${userId.slice(0, 8)}@dashsub.ng`;
+    }
+ 
+    const fullName = profile.full_name?.trim() || userEmail.split('@')[0];
+ 
+    // ── 4. Create customer on Payvessel (if not already) ─────────────
+    let customerId: string = profile.payvessel_customer_id ?? '';
+ 
+    if (!customerId) {
+      const custRes = await fetch(`${PAYVESSEL_BASE}/api/v3/requests/customer`, {
+        method:  'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.PAYVESSEL_SECRET_KEY}`,
+          'Content-Type':  'application/json',
+        },
+        body: JSON.stringify({
+          customerEmail:     userEmail,
+          customerFirstname: fullName.split(' ')[0] ?? fullName,
+          customerLastname:  fullName.split(' ').slice(1).join(' ') || 'User',
+          customerPhone:     '08000000000', // placeholder — update if you collect phone
+        }),
+      });
+ 
+      if (!custRes.ok) {
+        const errText = await custRes.text();
+        console.error('Payvessel customer error:', errText);
+        return NextResponse.json(
+          { success: false, message: 'Failed to create customer on Payvessel' },
+          { status: 500 }
         );
-
-        return NextResponse.json({
-          success: true,
-          message: 'Virtual accounts already exist',
-          accounts: accountDetails.accounts,
-        });
-      } catch (error) {
-        console.log('⚠️ Error fetching existing account, will create new one');
       }
+ 
+      const custData = await custRes.json();
+      customerId     = custData?.data?.id ?? custData?.data?.customerId ?? '';
+ 
+      if (!customerId) {
+        console.error('Payvessel returned no customer id:', custData);
+        return NextResponse.json(
+          { success: false, message: 'Payvessel did not return a customer ID' },
+          { status: 500 }
+        );
+      }
+ 
+      // Save customer id immediately so we don't create duplicates
+      await supabase
+        .from('profiles')
+        .update({ payvessel_customer_id: customerId })
+        .eq('id', userId);
     }
-
-    // Get user email
-    const { data: authUser } = await supabase.auth.admin.getUserById(userId);
-    
-    if (!authUser?.user?.email) {
+ 
+    // ── 5. Create dedicated virtual account ─────────────────────────
+    //    Payvessel supports multiple banks — PalmPay (999991), Wema (035)
+    const vaRes = await fetch(`${PAYVESSEL_BASE}/api/v3/requests/virtualaccount`, {
+      method:  'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.PAYVESSEL_SECRET_KEY}`,
+        'Content-Type':  'application/json',
+      },
+      body: JSON.stringify({
+        customerId,
+        // Request PalmPay + Wema accounts (Payvessel bank codes)
+        bankCode:       ['999991', '035'],
+        // accountName shown on the bank app when someone sends money
+        accountName:    `DashSub ${fullName}`,
+        // amount: 0 means unlimited (dedicated account, not one-time)
+        amount:          0,
+        // Reference ties this account to our user — used in webhook lookup
+        customerReference: `DASHSUB_${userId.replace(/-/g, '').slice(0, 20)}`,
+      }),
+    });
+ 
+    if (!vaRes.ok) {
+      const errText = await vaRes.text();
+      console.error('Payvessel virtual account error:', errText);
       return NextResponse.json(
-        { success: false, message: 'User email not found' },
-        { status: 404 }
+        { success: false, message: 'Failed to create virtual account. Please try again.' },
+        { status: 500 }
       );
     }
-
-    // Prepare account name
-    const fullName = profile.full_name || authUser.user.email.split('@')[0];
-    // Monnify recommends uppercase for account names
-    const accountName = `DASHSUB ${fullName}`.toUpperCase().substring(0, 40);
-
-    console.log('👤 Creating account for:', authUser.user.email);
-    console.log('📛 Account name:', accountName);
-    console.log('🆔 Account reference:', profile.account_number);
-
-    // Create reserved account with Monnify
-    const reservedAccount = await monnifyService.createReservedAccount({
-      accountReference: profile.account_number,
-      accountName: accountName,
-      currencyCode: 'NGN',
-      contractCode: process.env.MONNIFY_CONTRACT_CODE!,
-      customerEmail: authUser.user.email,
-      customerName: fullName,
-      getAllAvailableBanks: true, // Get all available banks
-    });
-
-    // Save to database
-    const { error: updateError } = await supabase
+ 
+    const vaData = await vaRes.json();
+ 
+    // Payvessel returns accounts as an array
+    const rawAccounts: any[] = vaData?.data?.accounts ?? vaData?.data ?? [];
+ 
+    if (!rawAccounts.length) {
+      console.error('Payvessel returned no accounts:', vaData);
+      return NextResponse.json(
+        { success: false, message: 'No virtual accounts returned. Contact support.' },
+        { status: 500 }
+      );
+    }
+ 
+    // ── 6. Normalise into our schema ─────────────────────────────────
+    const accounts = rawAccounts.map((acc: any) => ({
+      bankName:      acc.bankName      ?? acc.bank_name      ?? 'Unknown Bank',
+      bankCode:      acc.bankCode      ?? acc.bank_code      ?? '',
+      accountNumber: acc.accountNumber ?? acc.account_number ?? '',
+      accountName:   acc.accountName   ?? acc.account_name   ?? `DashSub ${fullName}`,
+    }));
+ 
+    const customerReference = `DASHSUB_${userId.replace(/-/g, '').slice(0, 20)}`;
+ 
+    // ── 7. Persist to Supabase ───────────────────────────────────────
+    const { error: updateErr } = await supabase
       .from('profiles')
       .update({
-        monnify_account_reference: reservedAccount.accountReference,
-        monnify_accounts: reservedAccount.accounts,
-        // Store first account as primary for backward compatibility
-        virtual_account_number: reservedAccount.accounts[0]?.accountNumber,
-        virtual_account_bank: reservedAccount.accounts[0]?.bankName,
-        virtual_account_name: reservedAccount.accounts[0]?.accountName,
+        monnify_accounts:          accounts,       // reuse existing column
+        monnify_account_reference: customerReference,
+        payvessel_customer_id:     customerId,
       })
       .eq('id', userId);
-
-    if (updateError) {
-      console.error('❌ Failed to save virtual accounts:', updateError);
-      throw updateError;
+ 
+    if (updateErr) {
+      console.error('Supabase update error:', updateErr);
+      return NextResponse.json(
+        {
+          success: false,
+          message: 'Account created but could not be saved. Please contact support.',
+        },
+        { status: 500 }
+      );
     }
-
-    console.log('✅ Virtual accounts created and saved to database');
-
-    return NextResponse.json({
-      success: true,
-      message: 'Virtual accounts created successfully',
-      accounts: reservedAccount.accounts,
-    });
-  } catch (error: any) {
-    console.error('❌ Error creating virtual account:', error);
-    
+ 
+    return NextResponse.json({ success: true, accounts });
+  } catch (err: any) {
+    console.error('create-virtual-account unhandled error:', err);
     return NextResponse.json(
-      { 
-        success: false, 
-        message: error.message || 'Failed to create virtual account',
-        details: error.toString()
-      },
+      { success: false, message: err.message ?? 'Internal server error' },
       { status: 500 }
     );
   }
 }
+ 
