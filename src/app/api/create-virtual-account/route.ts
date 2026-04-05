@@ -1,3 +1,14 @@
+// app/api/create-virtual-account/route.ts
+//
+// Creates a Payvessel STATIC reserved account for a user.
+// Uses the CORRECT Payvessel API format based on official docs:
+//   POST https://api.payvessel.com/pms/api/external/request/customerReservedAccount/
+//
+// Required env vars in .env.local AND Vercel:
+//   PAYVESSEL_API_KEY        → starts with PVKEY-...
+//   PAYVESSEL_SECRET_KEY     → starts with PVSECRET-...
+//   PAYVESSEL_BUSINESS_ID    → from Payvessel dashboard → Settings → Business Info
+//   SUPABASE_SERVICE_ROLE_KEY
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
@@ -7,7 +18,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const BASE = 'https://api.payvessel.com';
+// Auto-detect test vs live from key prefix
+// PVTESTKEY- = test mode → sandbox base URL
+// PVKEY-     = live mode → production base URL
+const isTestMode = (process.env.PAYVESSEL_API_KEY ?? '').startsWith('PVTESTKEY-');
+const BASE = isTestMode
+  ? 'https://sandbox.payvessel.com'   // test/sandbox base
+  : 'https://api.payvessel.com';      // production base
 
 export async function POST(req: NextRequest) {
   try {
@@ -95,7 +112,9 @@ export async function POST(req: NextRequest) {
     );
 
     const payvesselData = await payvesselRes.json();
+    console.log('Payvessel status:', payvesselRes.status);
     console.log('Payvessel response:', JSON.stringify(payvesselData, null, 2));
+    console.log('Using BASE URL:', BASE, '| Test mode:', isTestMode);
 
     // ── 6. Check for success ─────────────────────────────────────────
     if (!payvesselRes.ok || !payvesselData.status) {
