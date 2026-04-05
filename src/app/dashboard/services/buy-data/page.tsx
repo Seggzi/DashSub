@@ -332,7 +332,7 @@ export default function BuyData() {
               <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--mint)', boxShadow: '0 0 8px var(--mint-glow)', display: 'inline-block', animation: 'blink 2.5s ease infinite' }} />
               <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: '-.01em', color: 'var(--gray)' }}>Buy Data</span>
             </div>
-            <Link href="/dashboard/history" style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--mint)', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>
+            <Link href="/dashboard/transactions" style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--mint)', textDecoration: 'none', fontSize: 13, fontWeight: 700 }}>
               <Clock style={{ width: 13, height: 13 }} />History
             </Link>
           </div>
@@ -507,7 +507,7 @@ export default function BuyData() {
           <div className="a6" style={{ marginTop: 36 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--gray)' }}>Recent Purchases</span>
-              <Link href="/dashboard/history" style={{ fontSize: 12, color: 'var(--mint)', textDecoration: 'none', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Link href="/dashboard/transactions" style={{ fontSize: 12, color: 'var(--mint)', textDecoration: 'none', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
                 See all <ArrowRight style={{ width: 12, height: 12 }} />
               </Link>
             </div>
