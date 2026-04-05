@@ -5,7 +5,7 @@ export default function Footer() {
   const currentYear = new Date().getFullYear();
 
   return (
-    <footer id="footer" className="bg-brand-carbon text-brand-gray pt-20 pb-10 border-t border-white/5">
+    <footer id="footer" className="bg-brand-primary text-brand-gray pt-20 pb-10 border-t border-white/5">
       <div className="max-w-7xl mx-auto px-6">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 mb-16">
           
@@ -52,7 +52,7 @@ export default function Footer() {
             <ul className="space-y-4 text-sm text-brand-gray/60">
               {['Buy Cheap Data', 'Airtime Topup', 'Electricity Bills', 'Cable TV Sub', 'Print Result Checker'].map((item) => (
                 <li key={item}>
-                  <Link href="#" className="hover:text-brand-mint transition-colors">{item}</Link>
+                  <Link href="auth" className="hover:text-brand-mint transition-colors">{item}</Link>
                 </li>
               ))}
             </ul>

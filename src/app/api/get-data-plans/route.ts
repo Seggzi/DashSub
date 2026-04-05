@@ -11,48 +11,35 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const network = searchParams.get('network');
 
-    console.log('📡 Get data plans from database for network:', network);
-
     if (!network) {
       return NextResponse.json(
-        { error: 'Network parameter is required' },
+        { error: 'Network required' },
         { status: 400 }
       );
     }
 
-    // Fetch from Supabase
     const { data: plans, error } = await supabase
       .from('data_plans')
-      .select('*')
+      .select('plan_code, plan_name, selling_price, duration, plan_type, is_active')
       .eq('network_id', network)
       .eq('is_active', true)
       .order('selling_price', { ascending: true });
 
     if (error) {
-      console.error('❌ Database error:', error);
-      return NextResponse.json(
-        { error: 'Failed to fetch plans from database' },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    console.log(`✅ Found ${plans.length} plans for network ${network}`);
-
-    // Transform to frontend format
-    const transformedPlans = plans.map((plan) => ({
-      plan_code: plan.plan_code,
-      plan_name: plan.plan_name,
-      plan_amount: plan.selling_price, // User sees selling price
+    const transformed = (plans || []).map(plan => ({
+      plan_code:     plan.plan_code,
+      plan_name:     plan.plan_name,
+      plan_amount:   plan.selling_price,
       plan_duration: plan.duration,
+      plan_type:     plan.plan_type,
     }));
 
-    return NextResponse.json(transformedPlans);
+    return NextResponse.json(transformed);
 
-  } catch (error: any) {
-    console.error('❌ Error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error: ' + error.message },
-      { status: 500 }
-    );
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

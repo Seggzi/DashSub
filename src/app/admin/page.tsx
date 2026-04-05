@@ -1,203 +1,193 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { useSupabaseSession } from '@/providers/SupabaseProvider';
-import { Shield, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
+import Link from 'next/link';
+import {
+  LayoutDashboard,
+  Users,
+  CreditCard,
+  Settings,
+  LogOut,
+  Menu,
+  X,
+  Shield,
+  DollarSign,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
-export default function AdminLogin() {
+export default function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const { session, isLoading } = useSupabaseSession();
   const router = useRouter();
-  const { session } = useSupabaseSession();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const pathname = usePathname();
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [checkingAdmin, setCheckingAdmin] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  // Check if already logged in as admin
-  useEffect(() => {
-    const checkExistingAdmin = async () => {
-      if (session?.user?.id) {
-        const { data: adminUser } = await supabase
-          .from('admin_users')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .single();
+ useEffect(() => {
+  const checkAdminStatus = async () => {
+    // Skip check for login page
+    if (pathname === '/admin/login') {
+      setCheckingAdmin(false);
+      return;
+    }
 
-        if (adminUser) {
-          // Already logged in as admin, redirect
-          router.push('/admin');
-        }
-      }
-    };
+    console.log('🔍 Checking admin status...', { session: !!session, userId: session?.user?.id });
 
-    checkExistingAdmin();
-  }, [session, router]);
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
+    if (!session?.user?.id) {
+      console.log('❌ No session, redirecting to login');
+      router.push('/admin/login');
+      return;
+    }
 
     try {
-      console.log('🔐 Attempting admin login...');
-
-      // Sign in
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (authError) {
-        console.error('Auth error:', authError);
-        throw authError;
-      }
-
-      if (!authData.user) {
-        throw new Error('Login failed');
-      }
-
-      console.log('✅ Auth successful, checking admin status...');
-
-      // Small delay to ensure session is established
-      await new Promise(resolve => setTimeout(resolve, 500));
-
       // Check if user is admin
-      const { data: adminUser, error: adminError } = await supabase
+      const { data: adminUser, error } = await supabase
         .from('admin_users')
         .select('*')
-        .eq('user_id', authData.user.id)
+        .eq('user_id', session.user.id)
         .single();
 
-      console.log('Admin check result:', { adminUser, adminError });
+      console.log('Admin check result:', { adminUser, error });
 
-      if (adminError || !adminUser) {
-        console.error('Not an admin:', adminError);
-        // Not an admin, sign them out
+      if (error || !adminUser) {
+        console.log('❌ Not an admin, redirecting to login');
+        toast.error('Access denied: Admin only');
         await supabase.auth.signOut();
-        throw new Error('Access denied: Admin credentials required');
+        router.push('/admin/login');
+        return;
       }
 
-      console.log('✅ Admin verified, redirecting...');
-      toast.success('Welcome back, Admin!');
-      
-      // Wait a bit before redirect to ensure state is updated
-      await new Promise(resolve => setTimeout(resolve, 300));
-      router.push('/admin');
-    } catch (err: any) {
-      console.error('Login error:', err);
-      setError(err.message || 'Login failed');
-      toast.error(err.message || 'Login failed');
+      console.log('✅ Admin verified');
+      setIsAdmin(true);
+    } catch (err) {
+      console.error('Error checking admin status:', err);
+      router.push('/admin/login');
     } finally {
-      setLoading(false);
+      setCheckingAdmin(false);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-brand-carbon flex items-center justify-center p-6">
-      {/* Background decoration */}
-      <div className="absolute top-0 right-0 w-96 h-96 bg-brand-mint/5 rounded-full blur-3xl" />
-      <div className="absolute bottom-0 left-0 w-96 h-96 bg-brand-primary/20 rounded-full blur-3xl" />
+  if (!isLoading) {
+    checkAdminStatus();
+  }
+}, [session, isLoading, router, pathname]);
 
-      <div className="relative z-10 w-full max-w-md">
-        {/* Logo/Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-brand-mint to-emerald-400 rounded-3xl mb-4 shadow-2xl shadow-brand-mint/20">
-            <Shield className="w-10 h-10 text-brand-carbon" />
-          </div>
-          <h1 className="text-3xl font-black text-white mb-2">Admin Portal</h1>
-          <p className="text-brand-gray/60">Sign in to access the admin dashboard</p>
-        </div>
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push('/admin/login');
+  };
 
-        {/* Login Form */}
-        <div className="bg-brand-primary/50 backdrop-blur-xl border border-brand-mint/10 rounded-3xl p-8 shadow-2xl">
-          {error && (
-            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-red-400 text-sm font-semibold">{error}</p>
-                {error.includes('Admin credentials') && (
-                  <p className="text-red-400/70 text-xs mt-1">
-                    This account does not have admin privileges
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
+  // Render login page without layout
+  if (pathname === '/admin/login') {
+    return <>{children}</>;
+  }
 
-          <form onSubmit={handleLogin} className="space-y-6">
-            {/* Email */}
-            <div>
-              <label className="block text-sm font-semibold text-brand-gray/80 mb-3 flex items-center gap-2">
-                <Mail className="w-4 h-4" />
-                Admin Email
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@dashsub.com"
-                required
-                autoComplete="email"
-                className="w-full bg-brand-carbon/50 border-2 border-brand-mint/20 rounded-2xl px-5 py-4 text-white text-lg placeholder:text-brand-gray/40 focus:outline-none focus:border-brand-mint transition-all"
-              />
-            </div>
-
-            {/* Password */}
-            <div>
-              <label className="block text-sm font-semibold text-brand-gray/80 mb-3 flex items-center gap-2">
-                <Lock className="w-4 h-4" />
-                Password
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                autoComplete="current-password"
-                className="w-full bg-brand-carbon/50 border-2 border-brand-mint/20 rounded-2xl px-5 py-4 text-white text-lg placeholder:text-brand-gray/40 focus:outline-none focus:border-brand-mint transition-all"
-              />
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-brand-mint to-emerald-400 text-brand-carbon font-black text-lg py-5 rounded-2xl hover:shadow-2xl hover:shadow-brand-mint/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-6 h-6 animate-spin" />
-                  Authenticating...
-                </>
-              ) : (
-                <>
-                  <Shield className="w-6 h-6" />
-                  Sign In
-                </>
-              )}
-            </button>
-          </form>
-
-          {/* Security Notice */}
-          <div className="mt-6 p-4 bg-brand-mint/5 border border-brand-mint/10 rounded-2xl">
-            <p className="text-xs text-brand-gray/60 text-center">
-              🔒 This is a secured admin area. All activities are logged.
-            </p>
-          </div>
-
-          {/* Debug Info (remove in production) */}
-          {process.env.NODE_ENV === 'development' && (
-            <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl">
-              <p className="text-xs text-yellow-400 text-center">
-                🔧 Dev Mode: Your email is {email || 'not entered'}
-              </p>
-            </div>
-          )}
+  if (isLoading || checkingAdmin) {
+    return (
+      <div className="min-h-screen bg-brand-carbon flex items-center justify-center">
+        <div className="text-center">
+          <Shield className="w-12 h-12 text-brand-mint mx-auto mb-4 animate-pulse" />
+          <p className="text-brand-gray">Checking permissions...</p>
         </div>
       </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return null;
+  }
+
+  const navigation = [
+    { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
+    { name: 'Users', href: '/admin/users', icon: Users },
+    { name: 'Transactions', href: '/admin/transactions', icon: CreditCard },
+    { name: 'Pricing', href: '/admin/pricing', icon: DollarSign },
+    { name: 'Settings', href: '/admin/settings', icon: Settings },
+    { name: 'Plans', href: '/admin/plans', icon: Settings },
+  ];
+
+  return (
+    <div className="min-h-screen bg-brand-carbon">
+      {/* Mobile menu button */}
+      <div className="lg:hidden fixed top-4 left-4 z-50">
+        <button
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="p-2 bg-brand-primary rounded-lg border border-brand-mint/20"
+        >
+          {sidebarOpen ? (
+            <X className="w-6 h-6 text-brand-mint" />
+          ) : (
+            <Menu className="w-6 h-6 text-brand-mint" />
+          )}
+        </button>
+      </div>
+
+      {/* Sidebar */}
+      <aside
+        className={`fixed top-0 left-0 h-screen bg-brand-primary border-r border-brand-mint/10 transition-all duration-300 z-40 ${
+          sidebarOpen ? 'w-64' : 'w-0 lg:w-20'
+        } overflow-hidden`}
+      >
+        <div className="p-6">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="p-2 bg-brand-mint rounded-lg">
+              <Shield className="w-6 h-6 text-brand-carbon" />
+            </div>
+            {sidebarOpen && (
+              <div>
+                <h1 className="text-xl font-bold text-white">Admin Panel</h1>
+                <p className="text-xs text-brand-gray/60">DashSub</p>
+              </div>
+            )}
+          </div>
+
+          <nav className="space-y-2">
+            {navigation.map((item) => {
+              const isActive = pathname === item.href;
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all group ${
+                    isActive
+                      ? 'bg-brand-mint/10 text-brand-mint'
+                      : 'text-brand-gray/80 hover:bg-brand-mint/10 hover:text-brand-mint'
+                  }`}
+                >
+                  <item.icon className="w-5 h-5" />
+                  {sidebarOpen && <span className="font-medium">{item.name}</span>}
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div className="absolute bottom-6 left-6 right-6">
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-3 px-4 py-3 rounded-xl text-red-400 hover:bg-red-500/10 transition-all w-full"
+            >
+              <LogOut className="w-5 h-5" />
+              {sidebarOpen && <span className="font-medium">Logout</span>}
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <main
+        className={`transition-all duration-300 ${
+          sidebarOpen ? 'lg:ml-64' : 'lg:ml-20'
+        }`}
+      >
+        <div className="p-6 lg:p-8">{children}</div>
+      </main>
     </div>
   );
 }

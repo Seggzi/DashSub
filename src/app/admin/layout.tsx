@@ -15,6 +15,7 @@ import {
   X,
   Shield,
   DollarSign,
+  Wifi,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -104,13 +105,13 @@ export default function AdminLayout({
     return null;
   }
 
-  const navigation = [
-    { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
-    { name: 'Users', href: '/admin/users', icon: Users },
-    { name: 'Transactions', href: '/admin/transactions', icon: CreditCard },
-    { name: 'Pricing', href: '/admin/pricing', icon: DollarSign },
-    { name: 'Settings', href: '/admin/settings', icon: Settings },
-  ];
+ const navigation = [
+  { name: 'Dashboard',    href: '/admin',              icon: LayoutDashboard },
+  { name: 'Users',        href: '/admin/users',        icon: Users           },
+  { name: 'Transactions', href: '/admin/transactions', icon: CreditCard      },
+  { name: 'Plans',        href: '/admin/plans',        icon: Wifi            }, // ← add this
+  { name: 'Settings',     href: '/admin/settings',     icon: Settings        },
+];
 
   return (
     <div className="min-h-screen bg-brand-carbon">
