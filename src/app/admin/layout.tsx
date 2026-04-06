@@ -111,6 +111,7 @@ export default function AdminLayout({
   { name: 'Transactions', href: '/admin/transactions', icon: CreditCard      },
   { name: 'Plans',        href: '/admin/plans',        icon: Wifi            }, // ← add this
   { name: 'Settings',     href: '/admin/settings',     icon: Settings        },
+  { name: 'Notification',     href: '/admin/notifications',     icon: Settings        },
 ];
 
   return (
