@@ -11,7 +11,8 @@ import {
     Tv, GraduationCap, History, Bell, Plus,
     LayoutDashboard, Share2, User, Eye, EyeOff,
     Copy, Check, ChevronRight, Menu, X, ChevronDown,
-    ArrowDownLeft, ArrowUpRight, Phone, Sparkles, CreditCard
+    ArrowDownLeft, ArrowUpRight, Phone, Sparkles, CreditCard,
+    Settings
 } from 'lucide-react';
 
 interface Transaction {
@@ -180,6 +181,7 @@ export default function VtuDashboard() {
                         <NavItem icon={<Bell size={18} />}         label="Notifications" href="/dashboard/notifications" />
                         <NavItem icon={<Share2 size={18} />}       label="Refer & Earn"  badge="Hot" href="/dashboard/referrals" />
                         <NavItem icon={<User size={18} />}         label="My Profile"    href="/dashboard/profile" />
+                        <NavItem icon={<Settings size={18} />}     label="Settings"    href="/dashboard/settings" />
                     </nav>
 
                     <div className="pt-4 border-t border-white/5 mt-4">
