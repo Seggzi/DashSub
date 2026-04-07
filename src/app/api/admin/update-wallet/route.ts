@@ -20,25 +20,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid balance' }, { status: 400 });
     }
 
-    // Update wallet balance
-    const { error: updateError } = await supabase
-      .from('profiles')
-      .update({ wallet_balance: new_balance })
-      .eq('id', user_id);
+    // FIX: update wallets table (not profiles.wallet_balance)
+    const { error: walletError } = await supabase
+      .from('wallets')
+      .update({ balance: new_balance, updated_at: new Date().toISOString() })
+      .eq('user_id', user_id);
 
-    if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
+    if (walletError) {
+      // If no wallet row exists yet, insert one
+      const { error: insertError } = await supabase
+        .from('wallets')
+        .insert({ user_id, balance: new_balance });
+
+      if (insertError) {
+        return NextResponse.json({ error: insertError.message }, { status: 500 });
+      }
     }
 
-    // Log the adjustment in a wallet_logs table if you have one (optional)
-    await supabase.from('wallet_logs').insert({
+    // Log to wallet_logs if table exists (fire and forget)
+    supabase.from('wallet_logs').insert({
       user_id,
       amount,
       type,
       reason: reason || null,
       balance_after: new_balance,
       created_by: 'admin',
-    }).then(() => {}); // fire and forget — no error if table doesn't exist
+    }).then(() => {});
 
     return NextResponse.json({ success: true, new_balance });
   } catch (err: any) {

@@ -1,14 +1,3 @@
-// app/api/purchase-electricity/route.ts
-//
-// Purchases electricity token/payment via VTPass.
-// Supports all Nigerian DISCOs, both prepaid and postpaid.
-//
-// Required env vars:
-//   VTPASS_API_KEY
-//   VTPASS_SECRET_KEY
-//   VTPASS_BASE_URL
-//   SUPABASE_SERVICE_ROLE_KEY
-
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
@@ -17,7 +6,20 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const BASE = process.env.VTPASS_BASE_URL ?? 'https://sandbox.vtpass.com';
+// Gladtidings DISCO ID map — same as verify-meter
+const DISCO_IDS: Record<string, number> = {
+  'ikeja-electric':        18,
+  'ibadan-electric':       19,
+  'eko-electric':          20,
+  'portharcourt-electric': 21,
+  'kaduna-electric':       22,
+  'kano-electric':         23,
+  'jos-electric':          24,
+  'abuja-electric':        25,
+  'enugu-electric':        26,
+  'yola-electric':         28,
+  'benin-electric':        29,
+};
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,6 +30,8 @@ export async function POST(req: NextRequest) {
       meterType,
       amount,
       phone,
+      customerName,
+      customerAddress,
       reference,
     } = await req.json();
 
@@ -43,6 +47,14 @@ export async function POST(req: NextRequest) {
     if (isNaN(numAmount) || numAmount < 500) {
       return NextResponse.json(
         { success: false, message: 'Minimum amount is ₦500' },
+        { status: 400 }
+      );
+    }
+
+    const discoId = DISCO_IDS[discoCode];
+    if (!discoId) {
+      return NextResponse.json(
+        { success: false, message: 'Invalid DISCO selected' },
         { status: 400 }
       );
     }
@@ -69,80 +81,91 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 3. Create pending transaction ────────────────────────────────
-    const { error: txInsertErr } = await supabase.from('transactions').insert({
+    await supabase.from('transactions').insert({
       user_id:      userId,
       amount:       numAmount,
       reference,
       status:       'pending',
       type:         'electricity',
       phone_number: phone,
-      metadata:     { discoCode, meterType, meterNumber },
+      metadata:     { discoCode, discoId, meterType, meterNumber, customerName, customerAddress },
     });
 
-    if (txInsertErr) {
-      return NextResponse.json(
-        { success: false, message: 'Failed to create transaction' },
-        { status: 500 }
-      );
-    }
+    // ── 4. Call Gladtidings bill payment API ─────────────────────────
+    // POST https://www.gladtidingsdata.com/api/v2/billpayment/
+    // Body: disco_id, amount, meter_number, meter_type, Customer_Phone,
+    //       customer_name, customer_address
+    const gladRes = await fetch(
+      'https://www.gladtidingsdata.com/api/v2/billpayment/',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.GLADTIDINGS_TOKEN}`,
+          'Content-Type':  'application/json',
+        },
+        body: JSON.stringify({
+          disco_id:         discoId,
+          amount:           numAmount,
+          meter_number:     meterNumber,
+          meter_type:       meterType,          // "prepaid" or "postpaid"
+          Customer_Phone:   phone,
+          customer_name:    customerName  || '',
+          customer_address: customerAddress || '',
+        }),
+      }
+    );
 
-    // ── 4. Call VTPass ───────────────────────────────────────────────
-    const credentials = Buffer.from(
-      `${process.env.VTPASS_API_KEY}:${process.env.VTPASS_SECRET_KEY}`
-    ).toString('base64');
+    const gladData = await gladRes.json();
+    console.log('Gladtidings billpayment response:', JSON.stringify(gladData, null, 2));
 
-    const vtpassRes = await fetch(`${BASE}/api/pay`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${credentials}`,
-        'Content-Type':  'application/json',
-      },
-      body: JSON.stringify({
-        request_id:  reference,
-        serviceID:   discoCode,
-        billersCode: meterNumber,
-        variation_code: meterType,   // "prepaid" or "postpaid"
-        amount:      numAmount,
-        phone,
-      }),
-    });
-
-    const vtData = await vtpassRes.json();
-    console.log('VTPass electricity response:', JSON.stringify(vtData, null, 2));
-
+    // ── 5. Check response ────────────────────────────────────────────
+    // Success: { Status: "successful", token: "Token : 03039...", ... }
     const isSuccess =
-      vtData?.code === '000' ||
-      vtData?.content?.transactions?.status === 'delivered';
+      gladData?.Status?.toLowerCase() === 'successful' ||
+      gladData?.status?.toLowerCase()  === 'successful';
 
     if (!isSuccess) {
-      // Mark transaction as failed
+      // Mark transaction failed
       await supabase.from('transactions')
         .update({ status: 'failed' })
         .eq('reference', reference);
 
-      const errMsg = vtData?.response_description ?? vtData?.content?.transactions?.remarks ?? 'Purchase failed';
+      const errMsg =
+        gladData?.message ??
+        gladData?.detail  ??
+        gladData?.Status  ??
+        'Purchase failed. Please try again.';
+
       return NextResponse.json({ success: false, message: errMsg });
     }
 
-    // ── 5. Deduct wallet balance ─────────────────────────────────────
+    // ── 6. Deduct wallet balance ─────────────────────────────────────
     const newBalance = Number(wallet.balance) - numAmount;
     await supabase.from('wallets')
       .update({ balance: newBalance })
       .eq('user_id', userId);
 
-    // ── 6. Mark transaction success ──────────────────────────────────
-    const token = vtData?.content?.transactions?.product_name ?? vtData?.content?.Token ?? '';
+    // ── 7. Update transaction to success ────────────────────────────
+    // Extract token — Gladtidings returns: "Token : 03039561630634665485"
+    const rawToken: string = gladData?.token ?? '';
+    const token = rawToken.replace(/^Token\s*:\s*/i, '').trim();
 
     await supabase.from('transactions')
       .update({
         status:   'success',
         metadata: {
           discoCode,
+          discoId,
           meterType,
           meterNumber,
+          customerName,
+          customerAddress,
           token,
-          units: vtData?.content?.transactions?.unit ?? '',
-          rawResponse: vtData,
+          paidAmount:    gladData?.paid_amount,
+          balanceBefore: gladData?.balance_before,
+          balanceAfter:  gladData?.balance_after,
+          gladtidingsId: gladData?.id,
+          ident:         gladData?.ident,
         },
       })
       .eq('reference', reference);
@@ -150,8 +173,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       token,
-      units:    vtData?.content?.transactions?.unit ?? '',
-      message:  `Electricity purchase successful!`,
+      message: 'Electricity purchased successfully!',
     });
 
   } catch (err: any) {
