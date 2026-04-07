@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useSupabaseSession } from '@/providers/SupabaseProvider';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
+import NotificationBell from '@/components/NotificationBell';
 import Link from 'next/link';
 import {
     Wallet, LogOut, Zap, Smartphone, Lightbulb,
@@ -47,7 +48,7 @@ export default function VtuDashboard() {
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [servicesOpen, setServicesOpen] = useState(false);
     const [loading, setLoading] = useState(true);
-    const [unreadNotifications] = useState(3);
+    // const [unreadNotifications] = useState(3);
 
     useEffect(() => {
         if (isLoading) return;
@@ -190,7 +191,7 @@ export default function VtuDashboard() {
                         </div>
 
                         <NavItem icon={<History size={20} />} label="Transactions" href="/dashboard/transactions" />
-                        <NavItem icon={<Bell size={20} />} label="Notifications" badge={unreadNotifications > 0 ? unreadNotifications.toString() : ''} href="/dashboard/notifications" />
+                        <NavItem icon={<Bell size={20} />} label="NotificationBell" href="/dashboard/notifications" />
                         <NavItem icon={<Share2 size={20} />} label="Refer & Earn" badge="Hot" href="/dashboard/referrals" />
                         <NavItem icon={<User size={20} />} label="My Profile" href="/dashboard/profile" />
                     </nav>
@@ -211,10 +212,7 @@ export default function VtuDashboard() {
                     <p className="text-white/80 font-medium">Welcome back, {session?.user.email?.split('@')[0] || 'User'}</p>
                     <div className="flex items-center gap-4">
                         <div className="relative">
-                            <Bell size={20} className="text-white/80" />
-                            {unreadNotifications > 0 && (
-                                <div className="absolute -top-1 -right-1 w-3 h-3 bg-brand-mint rounded-full animate-pulse" />
-                            )}
+                         <NotificationBell />
                         </div>
                         <div className="w-10 h-10 rounded-full bg-brand-mint/20 flex items-center justify-center text-brand-mint border border-brand-mint/30 font-bold">
                             {session?.user.email?.[0].toUpperCase()}

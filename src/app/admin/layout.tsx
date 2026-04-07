@@ -16,6 +16,7 @@ import {
   Shield,
   DollarSign,
   Wifi,
+  Bell,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -108,10 +109,10 @@ export default function AdminLayout({
  const navigation = [
   { name: 'Dashboard',    href: '/admin',              icon: LayoutDashboard },
   { name: 'Users',        href: '/admin/users',        icon: Users           },
+  { name: 'Plans',        href: '/admin/plans',        icon: Wifi            }, 
   { name: 'Transactions', href: '/admin/transactions', icon: CreditCard      },
-  { name: 'Plans',        href: '/admin/plans',        icon: Wifi            }, // ← add this
+  { name: 'Notification',     href: '/admin/notifications',     icon: Bell },
   { name: 'Settings',     href: '/admin/settings',     icon: Settings        },
-  { name: 'Notification',     href: '/admin/notifications',     icon: Settings        },
 ];
 
   return (
