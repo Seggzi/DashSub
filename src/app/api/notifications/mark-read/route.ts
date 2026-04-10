@@ -7,15 +7,27 @@ const supabase = createClient(
 );
 
 export async function POST(request: NextRequest) {
-  const { id, ids } = await request.json();
-  const toMark = ids ?? (id ? [id] : []);
-  if (!toMark.length) return NextResponse.json({ error: 'No ids' }, { status: 400 });
+  try {
+    const { id, ids, user_id, is_broadcast } = await request.json();
+    const toMark = ids ?? (id ? [id] : []);
+    if (!toMark.length || !user_id) {
+      return NextResponse.json({ error: 'Missing data' }, { status: 400 });
+    }
 
-  const { error } = await supabase
-    .from('notifications')
-    .update({ is_read: true })
-    .in('id', toMark);
+    if (is_broadcast) {
+      // For broadcasts: insert into notification_reads table
+      const rows = toMark.map((nid: string) => ({
+        user_id,
+        notification_id: nid,
+      }));
+      await supabase.from('notification_reads').upsert(rows, { onConflict: 'user_id,notification_id' });
+    } else {
+      // For personal notifications: update is_read directly
+      await supabase.from('notifications').update({ is_read: true }).in('id', toMark);
+    }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
 }

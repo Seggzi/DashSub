@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  Bell, CheckCircle2, XCircle, Info, AlertTriangle,
+  Bell, CheckCircle2, AlertTriangle, Info,
   ArrowLeft, Loader2, Check, Star, Gift, Zap,
   ChevronRight, Megaphone,
 } from 'lucide-react';
@@ -19,6 +19,7 @@ interface Notification {
   message: string;
   type: string;
   is_read: boolean;
+  _is_read?: boolean;  // computed read state for broadcasts
   action_url: string | null;
   created_at: string;
 }
@@ -64,27 +65,24 @@ export default function NotificationsPage() {
   const [expanded, setExpanded]           = useState<string | null>(null);
   const [markingAll, setMarkingAll]       = useState(false);
 
-  const unreadCount = notifications.filter(n => !n.is_read).length;
+  const getIsRead = (n: Notification) => n._is_read ?? n.is_read;
+  const unreadCount = notifications.filter(n => !getIsRead(n)).length;
 
   useEffect(() => {
     if (sessionLoading) return;
     if (!session) { router.push('/auth'); return; }
     fetchNotifications();
 
-    // Real-time new notifications
     const channel = supabase
-      .channel('notifications_page')
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'notifications',
-      }, (payload) => {
-        const n = payload.new as Notification;
-        if (!n.user_id || n.user_id === session.user.id) {
-          setNotifications(prev => [n, ...prev]);
-          toast.info(n.title, { description: n.message });
-        }
-      })
+      .channel('notifications_page_v2')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' },
+        (payload) => {
+          const n = payload.new as Notification;
+          if (!n.user_id || n.user_id === session.user.id) {
+            setNotifications(prev => [{ ...n, _is_read: false }, ...prev]);
+            toast.info(n.title, { description: n.message });
+          }
+        })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
@@ -93,41 +91,90 @@ export default function NotificationsPage() {
   async function fetchNotifications() {
     if (!session?.user?.id) return;
     setLoading(true);
-    const { data, error } = await supabase
+
+    const userCreatedAt = session.user.created_at;
+
+    // Personal notifications
+    const { data: personal } = await supabase
       .from('notifications')
       .select('*')
-      .or(`user_id.eq.${session.user.id},user_id.is.null`)
+      .eq('user_id', session.user.id)
       .order('created_at', { ascending: false });
 
-    if (error) toast.error('Failed to load notifications');
-    else setNotifications(data || []);
+    // Broadcasts only after user registered
+    const { data: broadcasts } = await supabase
+      .from('notifications')
+      .select('*')
+      .is('user_id', null)
+      .gte('created_at', userCreatedAt)
+      .order('created_at', { ascending: false });
+
+    // Which broadcasts has this user read?
+    const { data: readRecords } = await supabase
+      .from('notification_reads')
+      .select('notification_id')
+      .eq('user_id', session.user.id);
+
+    const readIds = new Set((readRecords || []).map(r => r.notification_id));
+
+    const markedBroadcasts = (broadcasts || []).map(n => ({
+      ...n,
+      _is_read: readIds.has(n.id),
+    }));
+
+    const all = [...(personal || []), ...markedBroadcasts]
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    setNotifications(all);
     setLoading(false);
   }
 
-  async function markRead(id: string) {
-    await supabase.from('notifications').update({ is_read: true }).eq('id', id);
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+  async function markRead(n: Notification) {
+    const isBroadcast = !n.user_id;
+    if (isBroadcast) {
+      await supabase.from('notification_reads')
+        .upsert({ user_id: session!.user.id, notification_id: n.id }, { onConflict: 'user_id,notification_id' });
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, _is_read: true } : x));
+    } else {
+      await supabase.from('notifications').update({ is_read: true }).eq('id', n.id);
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, is_read: true } : x));
+    }
   }
 
   async function markAllRead() {
+    if (!session?.user?.id) return;
     setMarkingAll(true);
-    const ids = notifications.filter(n => !n.is_read).map(n => n.id);
-    if (ids.length) {
-      await supabase.from('notifications').update({ is_read: true }).in('id', ids);
-      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+
+    const unreadPersonal   = notifications.filter(n => n.user_id === session.user.id && !n.is_read);
+    const unreadBroadcasts = notifications.filter(n => !n.user_id && !n._is_read);
+
+    if (unreadPersonal.length) {
+      await supabase.from('notifications')
+        .update({ is_read: true })
+        .in('id', unreadPersonal.map(n => n.id));
     }
+
+    if (unreadBroadcasts.length) {
+      await supabase.from('notification_reads')
+        .upsert(
+          unreadBroadcasts.map(n => ({ user_id: session.user.id, notification_id: n.id })),
+          { onConflict: 'user_id,notification_id' }
+        );
+    }
+
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true, _is_read: true })));
     setMarkingAll(false);
     toast.success('All marked as read');
   }
 
   async function handleOpen(n: Notification) {
     setExpanded(expanded === n.id ? null : n.id);
-    if (!n.is_read) await markRead(n.id);
+    if (!getIsRead(n)) await markRead(n);
   }
 
   const filtered = notifications.filter(n => {
     if (filter === 'all')    return true;
-    if (filter === 'unread') return !n.is_read;
+    if (filter === 'unread') return !getIsRead(n);
     return n.type === filter;
   });
 
@@ -143,33 +190,25 @@ export default function NotificationsPage() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800;900&display=swap');
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        :root {
-          --primary: #0D2E2E; --carbon: #080C0C; --mint: #53E6D4;
-          --gray: #F4F7F7; --muted: rgba(244,247,247,0.45);
-          --border: rgba(255,255,255,0.07); --font: 'Sora', sans-serif;
-        }
-        body { background: var(--primary); font-family: var(--font); -webkit-font-smoothing: antialiased; }
-        @keyframes spin    { to { transform: rotate(360deg); } }
+        :root { --primary:#0D2E2E; --carbon:#080C0C; --mint:#53E6D4; --gray:#F4F7F7; --font:'Sora',sans-serif; }
+        body { background:var(--primary); font-family:var(--font); -webkit-font-smoothing:antialiased; }
+        @keyframes spin    { to{transform:rotate(360deg)} }
         @keyframes fadeUp  { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes expand  { from{opacity:0;max-height:0} to{opacity:1;max-height:400px} }
-        .filter-btn { transition: all .14s; white-space: nowrap; }
-        .filter-btn:hover { transform: translateY(-1px); }
-        .notif-card { transition: all .15s; cursor: pointer; }
-        .notif-card:hover { border-color: rgba(83,230,212,0.25) !important; background: rgba(83,230,212,0.03) !important; }
-        .notif-card:active { transform: scale(.99); }
-        .mark-btn { transition: all .13s; }
-        .mark-btn:hover { background: rgba(83,230,212,0.15) !important; }
-        .filters-scroll { scrollbar-width: none; -ms-overflow-style: none; }
-        .filters-scroll::-webkit-scrollbar { display: none; }
+        .filter-btn { transition:all .14s; white-space:nowrap; }
+        .filter-btn:hover { transform:translateY(-1px); }
+        .notif-card { transition:all .15s; cursor:pointer; }
+        .notif-card:hover { border-color:rgba(83,230,212,0.25) !important; background:rgba(83,230,212,0.03) !important; }
+        .mark-btn { transition:all .13s; }
+        .mark-btn:hover { background:rgba(83,230,212,0.15) !important; }
+        .filters-scroll { scrollbar-width:none; -ms-overflow-style:none; }
+        .filters-scroll::-webkit-scrollbar { display:none; }
       `}</style>
 
       <div style={{ minHeight: '100vh', background: 'var(--primary)', color: 'var(--gray)', fontFamily: 'var(--font)' }}>
 
-        {/* Sticky Header */}
+        {/* Header */}
         <header style={{ position: 'sticky', top: 0, zIndex: 30, background: 'rgba(13,46,46,0.95)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
           <div style={{ maxWidth: 680, margin: '0 auto', padding: '0 16px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-
-            {/* Back + Title */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Link href="/dashboard"
                 style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(244,247,247,0.6)', textDecoration: 'none', flexShrink: 0 }}>
@@ -182,18 +221,12 @@ export default function NotificationsPage() {
                 </p>
               </div>
             </div>
-
-            {/* Mark all read */}
             {unreadCount > 0 && (
               <button className="mark-btn"
-                onClick={markAllRead}
-                disabled={markingAll}
+                onClick={markAllRead} disabled={markingAll}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 10, background: 'rgba(83,230,212,0.1)', border: '1px solid rgba(83,230,212,0.2)', color: '#53E6D4', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}>
-                {markingAll
-                  ? <Loader2 style={{ width: 13, height: 13, animation: 'spin 1s linear infinite' }} />
-                  : <Check style={{ width: 13, height: 13 }} />}
-                <span style={{ display: 'none' }} className="sm-show">Mark all read</span>
-                <span>Read all</span>
+                {markingAll ? <Loader2 style={{ width: 13, height: 13, animation: 'spin 1s linear infinite' }} /> : <Check style={{ width: 13, height: 13 }} />}
+                Read all
               </button>
             )}
           </div>
@@ -219,7 +252,6 @@ export default function NotificationsPage() {
 
         {/* Content */}
         <div style={{ maxWidth: 680, margin: '0 auto', padding: '16px 16px 80px' }}>
-
           {filtered.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '60px 20px', animation: 'fadeUp .3s ease' }}>
               <div style={{ width: 72, height: 72, borderRadius: 20, background: 'rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
@@ -229,51 +261,43 @@ export default function NotificationsPage() {
                 {filter === 'unread' ? 'No unread notifications' : 'No notifications yet'}
               </p>
               <p style={{ fontSize: 13, color: 'rgba(244,247,247,0.25)' }}>
-                {filter !== 'all' ? 'Try switching to "All"' : "You'll see messages from us here"}
+                {filter !== 'all' ? 'Try switching to "All"' : "You'll see messages here"}
               </p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {filtered.map((n, i) => {
+                const isRead   = getIsRead(n);
                 const cfg      = TYPE_CONFIG[n.type] ?? TYPE_CONFIG.info;
                 const Icon     = cfg.icon;
                 const isOpen   = expanded === n.id;
-                const isUnread = !n.is_read;
 
                 return (
-                  <div key={n.id}
-                    className="notif-card"
+                  <div key={n.id} className="notif-card"
                     onClick={() => handleOpen(n)}
-                    style={{ borderRadius: 16, border: `1px solid ${isUnread ? cfg.border : 'rgba(255,255,255,0.06)'}`, background: isUnread ? cfg.bg : 'rgba(8,12,12,0.5)', overflow: 'hidden', animation: `fadeUp .25s ease ${i * 0.03}s both` }}>
+                    style={{ borderRadius: 16, border: `1px solid ${!isRead ? cfg.border : 'rgba(255,255,255,0.06)'}`, background: !isRead ? cfg.bg : 'rgba(8,12,12,0.5)', overflow: 'hidden', animation: `fadeUp .25s ease ${i * 0.03}s both` }}>
 
-                    {/* Main row */}
                     <div style={{ padding: '14px 16px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-
-                      {/* Icon */}
                       <div style={{ width: 40, height: 40, borderRadius: 12, background: cfg.bg, border: `1px solid ${cfg.color}33`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <Icon style={{ width: 17, height: 17, color: cfg.color }} />
                       </div>
-
-                      {/* Text */}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-                          <p style={{ fontSize: 14, fontWeight: isUnread ? 800 : 600, color: isUnread ? '#F4F7F7' : 'rgba(244,247,247,0.75)', lineHeight: 1.3, flex: 1 }}>
+                          <p style={{ fontSize: 14, fontWeight: !isRead ? 800 : 600, color: !isRead ? '#F4F7F7' : 'rgba(244,247,247,0.75)', lineHeight: 1.3, flex: 1 }}>
                             {n.title}
                           </p>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                            {isUnread && <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#53E6D4', marginTop: 3 }} />}
+                            {!isRead && <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#53E6D4', marginTop: 3 }} />}
                             <ChevronRight style={{ width: 14, height: 14, color: 'rgba(244,247,247,0.3)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s' }} />
                           </div>
                         </div>
 
-                        {/* Preview (collapsed) */}
                         {!isOpen && (
-                          <p style={{ fontSize: 12, color: 'rgba(244,247,247,0.5)', lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                          <p style={{ fontSize: 12, color: 'rgba(244,247,247,0.5)', lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as any }}>
                             {n.message}
                           </p>
                         )}
 
-                        {/* Meta */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: isOpen ? 0 : 6 }}>
                           <span style={{ fontSize: 10, color: 'rgba(244,247,247,0.3)' }}>{timeAgo(n.created_at)}</span>
                           <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 6, background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.color}33`, textTransform: 'uppercase' }}>
@@ -288,7 +312,6 @@ export default function NotificationsPage() {
                       </div>
                     </div>
 
-                    {/* Expanded content */}
                     {isOpen && (
                       <div style={{ padding: '0 16px 16px 68px', animation: 'fadeUp .2s ease' }}>
                         <p style={{ fontSize: 13, color: 'rgba(244,247,247,0.65)', lineHeight: 1.7, marginBottom: 12 }}>

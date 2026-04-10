@@ -6,23 +6,15 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const KEYS = ['general', 'active_api', 'gladtidings', 'clubconnect', 'commission', 'notifications', 'email'];
-
 export async function GET() {
   try {
     const { data, error } = await supabase
-      .from('app_settings')
-      .select('key, value')
-      .in('key', KEYS);
+      .from('email_templates')
+      .select('*')
+      .order('name');
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-    const settings: Record<string, any> = {};
-    (data || []).forEach(row => {
-      settings[row.key] = row.value;
-    });
-
-    return NextResponse.json({ settings });
+    return NextResponse.json({ templates: data || [] });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
@@ -30,18 +22,18 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { key, value } = await request.json();
+    const { id, name, subject, body, variables } = await request.json();
 
-    if (!key || !KEYS.includes(key)) {
-      return NextResponse.json({ error: 'Invalid key' }, { status: 400 });
+    if (!subject || !body) {
+      return NextResponse.json({ error: 'Subject and body required' }, { status: 400 });
     }
 
     const { error } = await supabase
-      .from('app_settings')
-      .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+      .from('email_templates')
+      .update({ subject, body, variables, updated_at: new Date().toISOString() })
+      .eq('id', id);
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
     return NextResponse.json({ success: true });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

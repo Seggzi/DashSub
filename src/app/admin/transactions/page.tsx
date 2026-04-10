@@ -166,13 +166,18 @@ export default function AdminTransactions() {
 
   const fetchTransactions = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("transactions")
-      .select("*, profiles(full_name, email)")
-      .order("created_at", { ascending: false })
-      .limit(500); // load up to 500, filter client-side
-    if (error) { toast.error("Failed to load transactions"); }
-    else { setTransactions(data || []); }
+    try {
+      // FIX: use API route with service role key — anon key is blocked by RLS
+      const res = await fetch("/api/admin/get-transactions");
+      const result = await res.json();
+      if (!res.ok || result.error) {
+        toast.error("Failed to load transactions: " + (result.error || "Unknown error"));
+      } else {
+        setTransactions(result.data || []);
+      }
+    } catch (err) {
+      toast.error("Network error loading transactions");
+    }
     setLoading(false);
   }, []);
 
