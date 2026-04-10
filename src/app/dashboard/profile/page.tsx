@@ -11,7 +11,7 @@ import {
   Loader2, CheckCircle2, XCircle, Zap, ChevronRight,
   Phone, Lock, Bell, Trash2, Share2, Key, Star,
   ToggleLeft, ToggleRight, AlertTriangle, RefreshCw,
-  CreditCard, TrendingUp, Package, BadgeCheck,
+  CreditCard, TrendingUp, Package, BadgeCheck, History,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -94,7 +94,7 @@ export default function Profile() {
     setSaving(true);
     const { error } = await supabase.from('profiles').upsert({
       id: session.user.id, full_name: fullName,
-      phone_number: phone, updated_at: new Date().toISOString(),
+      phone: phone, updated_at: new Date().toISOString(),
     });
     if (error) toast.error('Failed to save profile');
     else { toast.success('Profile updated ✅'); setIsEditing(false); }
