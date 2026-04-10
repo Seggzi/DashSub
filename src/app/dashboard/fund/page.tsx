@@ -342,7 +342,7 @@ export default function FundWallet() {
     </div>
   );
 
-  const hasVirtualAccount = profile?.monnify_accounts && Array.isArray(profile.monnify_accounts) && profile.monnify_accounts.length > 0;
+  const hasVirtualAccount = profile?.virtual_accounts && Array.isArray(profile.virtual_accounts) && profile.virtual_accounts.length > 0;
 
   return (
     <>
@@ -490,7 +490,7 @@ export default function FundWallet() {
                     </p>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {profile.monnify_accounts.map((acc: any, i: number) => (
+                    {profile.virtual_accounts.map((acc: any, i: number) => (
                       <div key={i} style={{ background: 'var(--carbon)', border: '1px solid rgba(255,255,255,.06)', borderRadius: 18, padding: '20px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
       const { data: profile } = await supabase
         .from('profiles')
         .select('id')
-        .eq('monnify_account_reference', trackingReference)
+        .eq('payvessel_account_reference', trackingReference)
         .maybeSingle();
 
       userId = profile?.id ?? null;
@@ -105,12 +105,12 @@ export async function POST(req: NextRequest) {
     if (!userId && data.accountNumber) {
       const { data: profiles } = await supabase
         .from('profiles')
-        .select('id, monnify_accounts')
-        .not('monnify_accounts', 'is', null);
+        .select('id, virtual_accounts')
+.not('virtual_accounts', 'is', null);
 
       if (profiles) {
         for (const p of profiles) {
-          const accounts = p.monnify_accounts as any[];
+          const accounts = p.virtual_accounts as any[];
           if (accounts?.some((a: any) => a.accountNumber === data.accountNumber)) {
             userId = p.id;
             break;

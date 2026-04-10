@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     // ── Load user profile ─────────────────────────────────────────────────
     const { data: profile, error: profileErr } = await supabase
       .from('profiles')
-      .select('id, full_name, email, monnify_accounts, phone')
+      .select('id, full_name, email, virtual_accounts, phone')
       .eq('id', userId)
       .single();
 
@@ -62,14 +62,14 @@ export async function POST(req: NextRequest) {
 
     // ── Already has accounts? Return them ────────────────────────────────
     if (
-      profile.monnify_accounts &&
-      Array.isArray(profile.monnify_accounts) &&
-      profile.monnify_accounts.length > 0
+      profile.virtual_accounts &&
+      Array.isArray(profile.virtual_accounts) &&
+      profile.virtual_accounts.length > 0
     ) {
       return NextResponse.json({
-        success:  true,
-        message:  'Virtual account already exists',
-        accounts: profile.monnify_accounts,
+        success: true,
+        message: 'Virtual account already exists',
+        accounts: profile.virtual_accounts,
       });
     }
 
@@ -84,12 +84,12 @@ export async function POST(req: NextRequest) {
 
     // ── Build Payvessel request body ──────────────────────────────────────
     const payvesselBody: Record<string, any> = {
-      email:        userEmail,
-      name:         fullName,
-      phoneNumber:  profile.phone || '08000000000',
-      bankcode:     ['999991', '120001'],   // PalmPay + 9PSB
+      email: userEmail,
+      name: fullName,
+      phoneNumber: profile.phone || '08000000000',
+      bankcode: ['999991', '120001'],   // PalmPay + 9PSB
       account_type: 'STATIC',
-      businessid:   process.env.PAYVESSEL_BUSINESS_ID,
+      businessid: process.env.PAYVESSEL_BUSINESS_ID,
     };
 
     // Add BVN or NIN based on user's choice
@@ -107,8 +107,8 @@ export async function POST(req: NextRequest) {
       {
         method: 'POST',
         headers: {
-          'api-key':      process.env.PAYVESSEL_API_KEY!,
-          'api-secret':   `Bearer ${process.env.PAYVESSEL_SECRET_KEY}`,
+          'api-key': process.env.PAYVESSEL_API_KEY!,
+          'api-secret': `Bearer ${process.env.PAYVESSEL_SECRET_KEY}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payvesselBody),
@@ -136,10 +136,10 @@ export async function POST(req: NextRequest) {
     }
 
     const accounts = rawBanks.map((b: any) => ({
-      bankName:          b.bankName      ?? '',
-      bankCode:          b.bankCode      ?? '',
-      accountNumber:     b.accountNumber ?? '',
-      accountName:       b.accountName   ?? fullName,
+      bankName: b.bankName ?? '',
+      bankCode: b.bankCode ?? '',
+      accountNumber: b.accountNumber ?? '',
+      accountName: b.accountName ?? fullName,
       trackingReference: b.trackingReference ?? '',
     }));
 
@@ -151,10 +151,9 @@ export async function POST(req: NextRequest) {
     const { error: updateErr } = await supabase
       .from('profiles')
       .update({
-        monnify_accounts:          accounts,
-        monnify_account_reference: trackingReference,
+        monnify_accounts: accounts,
         // Store verification status (not the actual BVN/NIN value)
-        [`${idType}_verified`]:    true,
+        [`${idType}_verified`]: true,
       })
       .eq('id', userId);
 
