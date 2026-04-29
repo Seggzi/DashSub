@@ -22,6 +22,7 @@ export default function Home() {
 
   return (
     <div className="bg-white selection:bg-brand-mint selection:text-brand-carbon">
+      
       <Navbar />
 
       {/* --- HERO SECTION --- */}
