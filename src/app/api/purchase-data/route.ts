@@ -7,7 +7,7 @@ const supabase = createClient(
   { auth: { autoRefreshToken: false, persistSession: false } }
 );
 
-const GLADTIDINGS_TOKEN = '5f885ebfb97b22c2355605f7ffad5c4a884e2e87';
+const GLADTIDINGS_TOKEN = process.env.GLADTIDINGS_TOKEN ?? '';
 
 async function purchaseDataWithGladTidings(
   networkId: string,
