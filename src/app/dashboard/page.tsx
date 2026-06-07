@@ -59,7 +59,15 @@ export default function VtuDashboard() {
         async function loadData() {
             const { data: profileData } = await supabase
                 .from('profiles').select('*').eq('id', userId).single();
-            if (profileData) setProfile(profileData);
+            if (profileData) {
+                // DEBUG: log every key that has a value so we can find the accounts column
+                const accountKeys = Object.entries(profileData)
+                    .filter(([k, v]) => v !== null && k.toLowerCase().includes('account'))
+                    .map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
+                console.log('🔍 Account-related columns:', accountKeys);
+                console.log('🔍 All profile keys:', Object.keys(profileData).join(', '));
+                setProfile(profileData);
+            }
 
             const { data: walletData, error: walletError } = await supabase
                 .from('wallets').select('balance').eq('user_id', userId).single();
@@ -298,30 +306,34 @@ export default function VtuDashboard() {
 
                         {/* Virtual Account */}
                         {profile?.monnify_accounts && Array.isArray(profile.monnify_accounts) && profile.monnify_accounts.length > 0 ? (
-                            <div className="bg-brand-mint/5 border border-brand-mint/10 rounded-2xl p-5 flex flex-col justify-between gap-4">
-                                <div>
-                                    <div className="flex justify-between items-center mb-3">
-                                        <span className="text-[10px] font-black uppercase tracking-widest text-brand-mint/60">Automated Funding</span>
-                                        <div className="bg-brand-mint text-brand-carbon px-2 py-0.5 rounded text-[8px] font-black uppercase">Active</div>
-                                    </div>
-                                    <p className="text-xs text-brand-gray/60 mb-1">{profile.monnify_accounts[0].bankName}</p>
-                                    <div className="flex items-center justify-between">
-                                        <p className="text-xl font-black tracking-tight">{profile.monnify_accounts[0].accountNumber}</p>
-                                        <button
-                                            onClick={() => copyToClipboard(profile.monnify_accounts?.[0]?.accountNumber || '')}
-                                            className="p-2 hover:bg-brand-mint/20 rounded-lg text-brand-mint transition"
-                                        >
-                                            {copied ? <Check size={15} /> : <Copy size={15} />}
-                                        </button>
-                                    </div>
-                                    <p className="text-xs text-brand-gray/60 mt-1">{profile.monnify_accounts[0].accountName}</p>
-                                    {profile.monnify_accounts.length > 1 && (
-                                        <p className="text-[10px] text-brand-mint/60 mt-2">
-                                            +{profile.monnify_accounts.length - 1} more bank{profile.monnify_accounts.length > 2 ? 's' : ''} available
-                                        </p>
-                                    )}
+                            <div className="bg-brand-mint/5 border border-brand-mint/10 rounded-2xl p-5 flex flex-col gap-3">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-brand-mint/60">Virtual Accounts</span>
+                                    <span className="bg-green-400/10 text-green-400 border border-green-400/20 text-[9px] font-black px-2 py-0.5 rounded-full uppercase">Active</span>
                                 </div>
-                                <p className="text-[10px] text-brand-gray/40 italic">
+                                {profile.monnify_accounts.map((acc: any, i: number) => (
+                                    <div key={i} className="bg-black/20 border border-white/5 rounded-xl p-4">
+                                        <div className="flex items-center justify-between mb-3">
+                                            <span className="text-xs font-bold text-brand-gray/70">{acc.bankName}</span>
+                                            <span className="bg-green-400/10 text-green-400 border border-green-400/20 text-[9px] font-black px-2 py-0.5 rounded-full uppercase">Active</span>
+                                        </div>
+                                        <p className="text-[9px] font-bold text-brand-mint/50 uppercase tracking-widest mb-1">Account Number</p>
+                                        <div className="flex items-center justify-between mb-3">
+                                            <p className="text-lg font-black tracking-wider">{acc.accountNumber}</p>
+                                            <button
+                                                onClick={() => copyToClipboard(acc.accountNumber)}
+                                                className="w-8 h-8 rounded-lg bg-brand-mint/8 border border-brand-mint/20 flex items-center justify-center text-brand-mint hover:bg-brand-mint/20 transition"
+                                            >
+                                                {copied ? <Check size={13} /> : <Copy size={13} />}
+                                            </button>
+                                        </div>
+                                        <div className="pt-3 border-t border-white/5">
+                                            <p className="text-[9px] font-bold text-brand-mint/50 uppercase tracking-widest mb-1">Account Name</p>
+                                            <p className="text-xs font-bold text-brand-gray/70">{acc.accountName}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                                <p className="text-[10px] text-brand-gray/40 italic text-center">
                                     Funds sent here reflect instantly in your balance.
                                 </p>
                             </div>
