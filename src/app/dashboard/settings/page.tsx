@@ -9,8 +9,7 @@ import {
   User, Wallet, Calendar, Mail, Shield, LogOut,
   Edit2, Eye, EyeOff, Copy, Check, ArrowLeft,
   Loader2, History, CheckCircle2, XCircle, Info,
-  Zap,
-  ChevronRight
+  Zap, ChevronRight
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -27,13 +26,13 @@ export default function Profile() {
   // Editable profile fields
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState(session?.user.email || '');
+  const [email, setEmail] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Referral
   const [referralCode, setReferralCode] = useState('');
-  const referralLink = referralCode ? `${window.location.origin}/?ref=${referralCode}` : '';
+  const [referralLink, setReferralLink] = useState('');
 
   // KYC status (placeholder - later can come from DB)
   const [kycStatus, setKycStatus] = useState<'Not Verified' | 'Pending' | 'Verified' | 'Rejected'>('Not Verified');
@@ -44,6 +43,8 @@ export default function Profile() {
       router.push('/auth');
       return;
     }
+
+    setEmail(session.user.email || '');
 
     const userId = session.user.id;
 
@@ -60,7 +61,7 @@ export default function Profile() {
 
       // Profile data
       const { data: profile } = await supabase
-        .from('profiles') // Assuming you have a profiles table
+        .from('profiles')
         .select('full_name, phone, referral_code')
         .eq('id', userId)
         .single();
@@ -87,6 +88,13 @@ export default function Profile() {
     loadProfileData();
   }, [session, sessionLoading, router]);
 
+  // Update referral link when code changes
+  useEffect(() => {
+    if (referralCode && typeof window !== 'undefined') {
+      setReferralLink(`${window.location.origin}/?ref=${referralCode}`);
+    }
+  }, [referralCode]);
+
   const saveProfile = async () => {
     if (!session?.user.id) return;
 
@@ -112,29 +120,33 @@ export default function Profile() {
   };
 
   const generateReferralCode = async () => {
-    if (referralCode) return;
+    if (referralCode || !session?.user.id) return;
 
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     const { error } = await supabase
       .from('profiles')
       .update({ referral_code: code })
-      .eq('id', session?.user.id);
+      .eq('id', session.user.id);
 
     if (!error) {
       setReferralCode(code);
       toast.success('Referral code generated!');
+    } else {
+      toast.error('Failed to generate referral code');
     }
   };
 
   const copyReferralLink = () => {
+    if (!referralLink) return;
     navigator.clipboard.writeText(referralLink);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const copyEmail = () => {
-    navigator.clipboard.writeText(session?.user.email || '');
+    if (!session?.user.email) return;
+    navigator.clipboard.writeText(session.user.email);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -204,7 +216,7 @@ export default function Profile() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="bg-transparent border-b border-brand-mint/50 focus:outline-none"
-                    disabled // email usually not editable
+                    disabled
                   />
                 ) : (
                   <span className="text-brand-gray/80 font-medium">{session?.user.email}</span>
@@ -365,6 +377,3 @@ export default function Profile() {
     </div>
   );
 }
-
-
-
